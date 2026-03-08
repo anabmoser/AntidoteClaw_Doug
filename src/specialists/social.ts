@@ -65,25 +65,32 @@ Ana Moser atua em:
     if (needsSearch) {
       console.log(`[Social] 🔍 Identificada necessidade de pesquisa na web.`);
       const queryResult = await llmRouter.complete(
-        [{ role: 'user', content: `O usuário quer planejar redes sociais mas precisa de informações atuais. Baseado no pedido: "${input.text}", extraia a query de pesquisa ideal (em português ou inglês) para buscas no Brave Search. Responda APENAS com a query de busca, sem explicações.` }],
+        [{ role: 'user', content: `O usuário quer planejar redes sociais mas precisa de informações atuais. Baseado no pedido: "${input.text}", extraia a query de pesquisa ideal (em português ou inglês) para buscas no Brave Search. Responda APENAS com a query de busca, sem explicações. Se a solicitação não for clara o suficiente para gerar uma busca objetiva, responda exatamente com a palavra VAZIO.` }],
         {
           model: this.config.model,
           maxTokens: 100,
-          temperature: 0.2,
+          temperature: 0.1,
         }
       );
 
-      const query = queryResult.content.trim();
-      console.log(`[Social] 🔍 Pesquisando: "${query}"`);
+      let query = queryResult.content.trim();
+      query = query.replace(/^["']|["']$/g, '');
+      console.log(`[Social] 🔍 Extratou query: "${query}"`);
 
-      if (input.onProgress) {
-        await input.onProgress(`🔍 Buscando informações atualizadas sobre "${query}" na internet...`);
-      }
+      if (!query || query.toUpperCase() === 'VAZIO' || query.toUpperCase().includes('VAZIO')) {
+        console.log(`[Social] ⚠️ Consulta vaga ou vazia. Pulando pesquisa na web.`);
+        searchResults = `[SISTEMA: O usuário acionou a análise mas não especificou um tema claro para busca na internet. Aja com polidez e peça para ele especificar exatamente o que gostaria de pesquisar.]`;
+      } else {
+        if (input.onProgress) {
+          await input.onProgress(`🔍 Buscando informações atualizadas sobre "${query}" na internet...`);
+        }
 
-      try {
-        searchResults = await this.braveSearch(query);
-      } catch (err) {
-        console.error(`[Social] ❌ Erro Brave Search: ${err}`);
+        try {
+          searchResults = await this.braveSearch(query);
+        } catch (err) {
+          console.error(`[Social] ❌ Erro Brave Search: ${err}`);
+          searchResults = `[SISTEMA: A pesquisa não pôde ser executada na internet neste momento devido a um erro técnico: ${err}. Em vez disso, guie o usuário com seu conhecimento prévio sobre redes sociais.]`;
+        }
       }
     }
 
