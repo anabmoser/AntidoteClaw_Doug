@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+data/memory/
+data/google-service-account.json
+.tmp/
+*.log
+.DS_Store
