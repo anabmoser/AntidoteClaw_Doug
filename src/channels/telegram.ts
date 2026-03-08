@@ -23,6 +23,7 @@ interface TelegramUpdate {
         voice?: { file_id: string };
         video?: { file_id: string };
         document?: { file_id: string; file_name?: string };
+        caption?: string;
     };
     callback_query?: {
         id: string;
@@ -223,7 +224,7 @@ export class TelegramChannel implements Channel {
         }
 
         // Determina o conteúdo
-        let text = msg.text ?? '';
+        let text = msg.text ?? msg.caption ?? '';
         let mediaUrl: string | undefined;
         let mediaType: 'image' | 'audio' | 'video' | 'document' | undefined;
 

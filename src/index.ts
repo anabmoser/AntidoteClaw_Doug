@@ -20,7 +20,7 @@ import { writerSpecialist } from './specialists/writer.js';
 import { DesignerSpecialist } from './specialists/designer.js';
 import { ScoutSpecialist } from './specialists/scout.js';
 import { VideoSpecialist } from './specialists/video.js';
-import { socialSpecialist } from './specialists/social.js';
+import { SocialSpecialist } from './specialists/social.js';
 import { DriveService } from './services/drive.js';
 
 async function bootstrap(): Promise<void> {
@@ -94,7 +94,7 @@ async function bootstrap(): Promise<void> {
         orch.register(new VideoSpecialist(assemblyaiKey, driveService));
     }
 
-    orch.register(socialSpecialist);
+    orch.register(new SocialSpecialist(braveKey ?? ''));
 
     // ─── Inicializa o Gateway WebSocket ────────────────────────
 

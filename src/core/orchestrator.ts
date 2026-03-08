@@ -51,7 +51,7 @@ export class Orchestrator {
      * Tenta encontrar um specialist que corresponda à mensagem.
      * Verifica sessões ativas primeiro, depois por mediaType e por último triggers no texto.
      */
-    findSpecialist(text: string, mediaType?: string, senderId?: string): Specialist | undefined {
+    findSpecialist(text: string, mediaType?: string, senderId?: string, inputMediaUrl?: string): Specialist | undefined {
         // 1. Verifica se já existe uma sessão interativa travada neste usuário
         if (senderId) {
             const activeSpec = this.specialists.find(s => s.hasActiveSession(senderId));
@@ -71,7 +71,9 @@ export class Orchestrator {
                 // Verifica se o texto menciona vídeo/transcrição ou se é só o arquivo
                 const videoTerms = ['transcrev', 'vídeo', 'video', 'editar', 'cortar', 'legenda', 'ffmpeg'];
                 const lower = text.toLowerCase();
-                if (videoTerms.some(t => lower.includes(t)) || text.trim() === '') {
+                const isVideoExtension = inputMediaUrl?.match(/\.(mp4|mov|mkv|avi|webm)$/i);
+
+                if (videoTerms.some(t => lower.includes(t)) || (text.trim() === '' && isVideoExtension)) {
                     return videoSpec;
                 }
             }
@@ -113,7 +115,7 @@ export class Orchestrator {
         onProgress?: (message: string) => Promise<void>,
         onSendFile?: (filePath: string, caption: string) => Promise<void>
     ): Promise<OutgoingMessage | null> {
-        const specialist = this.findSpecialist(incoming.text, incoming.mediaType, incoming.senderId);
+        const specialist = this.findSpecialist(incoming.text, incoming.mediaType, incoming.senderId, incoming.mediaUrl);
         if (!specialist) return null;
 
         console.log(`[Orchestrator] 🎯 Roteando para: ${specialist.config.name}`);
