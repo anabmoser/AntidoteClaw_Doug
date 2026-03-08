@@ -9,6 +9,7 @@
  */
 
 import type { LLMProvider, LLMProviderName, LLMMessage, LLMCompletionOptions, LLMResponse, LLMToolCall } from '../types.js';
+import { ContextManager } from '../context.js';
 
 // ─── Funções do Agente (cada uma pode usar um modelo diferente) ─
 
@@ -264,6 +265,14 @@ export class LLMRouter {
      * Completação com failover automático.
      */
     async complete(messages: LLMMessage[], options?: LLMCompletionOptions): Promise<LLMResponse> {
+        // --- INJEÇÃO DA CAMADA DE CONTEXTO GLOBAL (Shared Context) ---
+        // Ler do arquivo dinamicamente todas as vezes que o agente pensar
+        const sharedContext = ContextManager.getSharedContext();
+        if (sharedContext) {
+            if (!options) options = {};
+            options.systemPrompt = (options.systemPrompt || '') + sharedContext;
+        }
+
         const available = this.getAvailableProviders();
         if (available.length === 0) {
             throw new Error('Nenhum provedor de LLM disponível. Configure a OPENROUTER_API_KEY.');
