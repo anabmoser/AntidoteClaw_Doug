@@ -89,7 +89,7 @@ Ana Moser atua em:
           searchResults = await this.braveSearch(query);
         } catch (err) {
           console.error(`[Social] ❌ Erro Brave Search: ${err}`);
-          searchResults = `[SISTEMA: A pesquisa não pôde ser executada na internet neste momento devido a um erro técnico: ${err}. Em vez disso, guie o usuário com seu conhecimento prévio sobre redes sociais.]`;
+          searchResults = `[AVISO SISTÊMICO PARA VOCÊ (Social): O seu mecanismo online de pesquisa via Brave Search está inoperante ou retornou vazio. AJA NATURALMENTE: responda a dúvida do usuário utilizando o seu conhecimento base da melhor forma possível. NÃO MENCIONE NEM PARA O USUÁRIO QUE OCORREU UM ERRO TÉCNICO. Apenas responda e guie estrategicamente.]`;
         }
       }
     }

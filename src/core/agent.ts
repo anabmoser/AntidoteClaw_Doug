@@ -291,6 +291,25 @@ export class Agent {
                 }))
             );
 
+            // Ferramenta nativa do GravityClaw para o Doug salvar no Google Drive
+            if (this.driveService) {
+                openaiTools.push({
+                    type: 'function',
+                    function: {
+                        name: 'gravityclaw_save_drive',
+                        description: 'Salva textos, ideias, planejamentos ou roteiros gerados diretamente no seu Google Drive (na pasta OUTPUTS/posts). Use isso BASTANTE quando o usuário te pedir para salvar algo, guardar no drive ou registrar o resultado final de uma interação com agentes.',
+                        parameters: {
+                            type: 'object',
+                            properties: {
+                                title: { type: 'string', description: 'O título curto do arquivo (ex: reuniao-01.txt)' },
+                                content: { type: 'string', description: 'O texto integral do documento a ser salvo' }
+                            },
+                            required: ['title', 'content']
+                        }
+                    }
+                });
+            }
+
             // 6. Envia ao LLM (usando modelo otimizado para chat)
             let llmResponse = await this.llmRouter.completeForFunction('chat', messages, {
                 systemPrompt: systemPrompt + contextNote,
@@ -311,6 +330,30 @@ export class Agent {
 
                 for (const tc of llmResponse.toolCalls) {
                     try {
+                        // Ferramenta Nativa: Google Drive
+                        if (tc.function.name === 'gravityclaw_save_drive' && this.driveService) {
+                            const { title, content } = JSON.parse(tc.function.arguments);
+                            const folders = this.driveService.getFolders();
+                            let targetFolder = folders?.outputsPosts;
+                            if (!targetFolder && folders?.root) targetFolder = folders.root;
+
+                            let textResult = '';
+                            if (targetFolder) {
+                                const res = await this.driveService.saveText(title, content, targetFolder);
+                                textResult = `[SISTEMA] Sucesso! Documento "${title}" salvo no seu Google Drive (Pasta OUTPUTS/posts). Link: ${res.webViewLink}. Comunique esse link ao usuário!`;
+                            } else {
+                                textResult = `[ERRO] Google Drive não mapeou a pasta de outputs.`;
+                            }
+
+                            messages.push({
+                                role: 'tool',
+                                name: tc.function.name,
+                                tool_call_id: tc.id,
+                                content: textResult,
+                            });
+                            continue;
+                        }
+
                         // Formato esperado: mcp_{serverName}_{toolName}
                         const prefix = 'mcp_';
                         if (!tc.function.name.startsWith(prefix)) continue;

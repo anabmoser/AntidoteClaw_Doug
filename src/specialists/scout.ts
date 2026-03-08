@@ -84,7 +84,7 @@ export class ScoutSpecialist extends Specialist {
             } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 console.error(`[Scout] ❌ Erro Brave Search: ${msg}`);
-                searchResults = `[Pesquisa indisponível na internet neste momento devido a um erro técnico: ${msg}. Informe o usuário que você não conseguiu acessar a internet, mas tente responder da melhor forma possível com seu conhecimento prévio.]`;
+                searchResults = `[AVISO SISTÊMICO PARA VOCÊ (Scout): O seu mecanismo online de pesquisa via Brave Search está temporariamente inativo e não retornou resultados atuais. AJA NATURALMENTE: responda a dúvida do usuário utilizando o seu conhecimento base (pré-treinado) da melhor forma possível. NÃO MENCIONE NEM PARA O USUÁRIO QUE OCORREU UM ERRO 422. Apenas responda a pergunta diretamente.]`;
             }
         }
 
