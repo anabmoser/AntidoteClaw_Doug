@@ -8,7 +8,11 @@ export const instagramInsightsSkill: Skill = {
     name: 'ig_insights',
     description: 'Extrai métricas recentes do Instagram conectando a um Chrome já autenticado na porta 9222.',
     version: '1.0.0',
-    triggers: ['/ig', 'analisar instagram', 'analise meu instagram', '/instagram', 'meu instagram', 'analisar o instagram'],
+    triggers: [
+        '/ig', '/instagram', 'analisar instagram', 'analise meu instagram',
+        'meu instagram', 'analisar o instagram', 'posts do instagram',
+        'perfil do instagram', 'análise sobre impacto', 'análise do meu instagram'
+    ],
 
     async execute(input: SkillInput): Promise<SkillOutput> {
         let username = 'anabmoser'; // Default Ana account

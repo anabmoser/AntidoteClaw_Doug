@@ -55,8 +55,13 @@ export class SkillsRegistry {
         for (const skill of this.skills.values()) {
             if (skill.triggers) {
                 for (const trigger of skill.triggers) {
-                    if (lower.startsWith(trigger.toLowerCase())) {
-                        return skill;
+                    const cleanTrigger = trigger.toLowerCase();
+                    // Permite acionar se começa com comandos explícitos (ex: /ig) 
+                    // ou se a frase inteira contém o gatilho semântico (ex: "analisar instagram")
+                    if (cleanTrigger.startsWith('/')) {
+                        if (lower.startsWith(cleanTrigger)) return skill;
+                    } else {
+                        if (lower.includes(cleanTrigger)) return skill;
                     }
                 }
             }
