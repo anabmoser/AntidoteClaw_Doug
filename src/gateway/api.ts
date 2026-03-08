@@ -79,6 +79,34 @@ export class DashboardApi {
             res.json({ skills });
         });
 
+        // --- 4.5. Agents Configuration ---
+        this.app.get('/api/agents', async (req: Request, res: Response) => {
+            try {
+                const configs = this.agent.getOrchestrator().list().map(s => s.config);
+                res.json({ agents: configs });
+            } catch (err) {
+                res.status(500).json({ error: String(err) });
+            }
+        });
+
+        this.app.put('/api/agents/:name', async (req: Request, res: Response) => {
+            try {
+                const { name } = req.params;
+                const newSettings = req.body;
+
+                const orchestrator = this.agent.getOrchestrator();
+                const success = await orchestrator.updateSpecialistConfig(name!, newSettings);
+
+                if (success) {
+                    res.json({ success: true, message: `Configurações do agente ${name} atualizadas.` });
+                } else {
+                    res.status(404).json({ error: `Agente ${name} não encontrado.` });
+                }
+            } catch (err) {
+                res.status(500).json({ error: String(err) });
+            }
+        });
+
         // --- 5. Skill Creator ---
         this.app.post('/api/skills/create', (req: Request, res: Response) => {
             const { name, description, triggerRegex, actionCode } = req.body;

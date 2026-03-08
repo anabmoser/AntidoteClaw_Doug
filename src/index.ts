@@ -96,6 +96,9 @@ async function bootstrap(): Promise<void> {
 
     orch.register(new SocialSpecialist(braveKey ?? ''));
 
+    // Carrega configurações customizadas feitas pelo Dashboard (agents.json)
+    await orch.loadConfigOverrides();
+
     // ─── Inicializa o Gateway WebSocket ────────────────────────
 
     const gateway = new Gateway({

@@ -6,3 +6,5 @@ data/google-service-account.json
 .tmp/
 *.log
 .DS_Store
+data/google-token.json
+data/google-oauth-credentials.json

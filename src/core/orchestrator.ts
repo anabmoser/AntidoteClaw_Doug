@@ -7,8 +7,13 @@
 
 import type { IncomingMessage, OutgoingMessage } from './types.js';
 import type { LLMRouter } from './llm/router.js';
-import { Specialist, type SpecialistInput, type SpecialistOutput } from './specialist.js';
+import { Specialist, type SpecialistInput, type SpecialistOutput, type SpecialistConfig } from './specialist.js';
 import type { DriveService } from '../services/drive.js';
+import * as fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+
+const AGENTS_CONFIG_FILE = join(process.cwd(), 'data', 'agents.json');
 
 export class Orchestrator {
     private specialists: Specialist[] = [];
@@ -27,6 +32,64 @@ export class Orchestrator {
         console.log(`[Orchestrator] 🧩 Specialist registrado: ${specialist.config.name}`);
         console.log(`    └─ Triggers: ${specialist.config.triggers.join(', ')}`);
         console.log(`    └─ Modelo: ${specialist.config.model}`);
+    }
+
+    /**
+     * Carrega as configurações personalizadas do JSON (Dashboard) e sobrescreve os defaults do código.
+     */
+    async loadConfigOverrides(): Promise<void> {
+        if (!existsSync(AGENTS_CONFIG_FILE)) return;
+
+        try {
+            const raw = await fs.readFile(AGENTS_CONFIG_FILE, 'utf-8');
+            const overrides: Record<string, Partial<SpecialistConfig>> = JSON.parse(raw);
+
+            for (const spec of this.specialists) {
+                const custom = overrides[spec.config.name];
+                if (custom) {
+                    spec.updateConfig(custom);
+                }
+            }
+            console.log(`[Orchestrator] 📄 Configurações dinâmicas de especialistas carregadas (${Object.keys(overrides).length} encontradas).`);
+        } catch (err) {
+            console.error(`[Orchestrator] ❌ Erro ao ler agents.json:`, err);
+        }
+    }
+
+    /**
+     * Atualiza a configuração de um Specialist e salva no JSON.
+     */
+    async updateSpecialistConfig(name: string, newConfig: Partial<SpecialistConfig>): Promise<boolean> {
+        const spec = this.specialists.find(s => s.config.name.toLowerCase() === name.toLowerCase());
+        if (!spec) return false;
+
+        spec.updateConfig(newConfig);
+
+        // Salvar tudo em arquivo
+        try {
+            let overrides: Record<string, Partial<SpecialistConfig>> = {};
+            if (existsSync(AGENTS_CONFIG_FILE)) {
+                const raw = await fs.readFile(AGENTS_CONFIG_FILE, 'utf-8');
+                overrides = JSON.parse(raw);
+            }
+
+            // Atualiza ou insere as configurações do agente específico
+            overrides[spec.config.name] = {
+                ...overrides[spec.config.name],
+                systemPrompt: newConfig.systemPrompt !== undefined ? newConfig.systemPrompt : spec.config.systemPrompt,
+                triggers: newConfig.triggers !== undefined ? newConfig.triggers : spec.config.triggers,
+                model: newConfig.model !== undefined ? newConfig.model : spec.config.model,
+                temperature: newConfig.temperature !== undefined ? newConfig.temperature : spec.config.temperature,
+                maxTokens: newConfig.maxTokens !== undefined ? newConfig.maxTokens : spec.config.maxTokens,
+            };
+
+            await fs.writeFile(AGENTS_CONFIG_FILE, JSON.stringify(overrides, null, 2), 'utf-8');
+            console.log(`[Orchestrator] 💾 Configurações salvas permanentemente em data/agents.json`);
+            return true;
+        } catch (err) {
+            console.error(`[Orchestrator] ❌ Erro ao salvar agents.json:`, err);
+            return false;
+        }
     }
 
     /**

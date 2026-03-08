@@ -52,11 +52,19 @@ export interface Tool {
 // ─── Base Specialist Class ────────────────────────────────────
 
 export abstract class Specialist {
-    readonly config: SpecialistConfig;
+    public config: SpecialistConfig;
     protected tools: Tool[] = [];
 
     constructor(config: SpecialistConfig) {
         this.config = config;
+    }
+
+    /**
+     * Atualiza a configuração do especialista dinamicamente.
+     */
+    updateConfig(newConfig: Partial<SpecialistConfig>): void {
+        this.config = { ...this.config, ...newConfig };
+        console.log(`[Specialist] ⚙️ Configuração de ${this.config.name} atualizada na memória.`);
     }
 
     /**
