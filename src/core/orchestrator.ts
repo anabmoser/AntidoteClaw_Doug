@@ -223,6 +223,18 @@ export class Orchestrator {
 
         console.log(`[Orchestrator] 🎯 Roteando para: ${specialist.config.name}`);
 
+        // Intercepta chamadas "vazias" (apenas o gatilho) para dar boas-vindas na sessão
+        const cleanText = incoming.text.toLowerCase().trim().replace(/^[^\w\/]+/, ''); // remove ?, ! no começo mas mantém /
+        const isJustTrigger = specialist.config.triggers.some(t => t.toLowerCase() === cleanText || t.toLowerCase() === incoming.text.toLowerCase().trim());
+
+        if (isJustTrigger && !incoming.mediaUrl) {
+            console.log(`[Orchestrator] 🚪 Gatilho puro detectado. Iniciando sessão focada sem rodar LLM.`);
+            return {
+                text: `[SISTEMA] Sessão focada iniciada com o especialista **${specialist.config.name}**. 🎯\n\nEnvie o material, link ou as instruções que deseja trabalhar.\n*(Para liberar o especialista depois, digite /sair ou tchau)*`,
+                specialist: specialist.config.name
+            };
+        }
+
         const input: SpecialistInput = {
             text: incoming.text,
             senderId: incoming.senderId,
