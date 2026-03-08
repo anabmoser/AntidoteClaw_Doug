@@ -52,30 +52,45 @@ export class ScoutSpecialist extends Specialist {
     async run(input: SpecialistInput, llmRouter: LLMRouter): Promise<SpecialistOutput> {
         // 1. Extrai a query de pesquisa
         const queryResult = await llmRouter.complete(
-            [{ role: 'user', content: `Extraia a query de pesquisa ideal (em português ou inglês, o que for mais relevante) para esta solicitação: "${input.text}". Responda APENAS com a query, sem explicações.` }],
+            [{ role: 'user', content: `Extraia a query de pesquisa ideal (em português ou inglês, o que for mais relevante) para esta solicitação: "${input.text}". Responda APENAS com a query, sem explicações. Se a solicitação for muito vaga, for apenas um cumprimento, ou não tiver um tema claro para busca na internet, responda exatamente com a palavra VAZIO.` }],
             {
                 model: this.config.model,
                 maxTokens: 100,
-                temperature: 0.2,
+                temperature: 0.1,
             }
         );
 
-        const query = queryResult.content.trim();
-        console.log(`[Scout] 🔍 Pesquisando: "${query}"`);
+        let query = queryResult.content.trim();
+        // Remove aspas caso o LLM adicione acidentalmente
+        query = query.replace(/^["']|["']$/g, '');
+
+        console.log(`[Scout] 🔍 Extraiu query: "${query}"`);
 
         // 2. Pesquisa via Brave Search
         let searchResults: string;
-        try {
-            searchResults = await this.braveSearch(query);
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.error(`[Scout] ❌ Erro Brave Search: ${msg}`);
-            searchResults = `[Pesquisa indisponível: ${msg}]`;
+
+        if (!query || query.toUpperCase() === 'VAZIO' || query.toUpperCase().includes('VAZIO')) {
+            console.log(`[Scout] ⚠️ Consulta vaga ou vazia. Pulando pesquisa na web.`);
+            searchResults = `[SISTEMA: O usuário acionou o Scout, mas não especificou um tema claro ou forneceu termos muito vagos para pesquisar na internet. Aja com polidez e peça para ele especificar exatamente qual assunto, notícia ou tendência ele gostaria que você buscasse hoje.]`;
+            query = ''; // Limpa a query para os metadados
+        } else {
+            try {
+                if (query.trim().length > 0) {
+                    console.log(`[Scout] 🌐 Executando Brave Search para: "${query}"`);
+                    searchResults = await this.braveSearch(query);
+                } else {
+                    searchResults = `[Erro Interno: Consulta vazia após limpeza]`;
+                }
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.error(`[Scout] ❌ Erro Brave Search: ${msg}`);
+                searchResults = `[Pesquisa indisponível na internet neste momento devido a um erro técnico: ${msg}. Informe o usuário que você não conseguiu acessar a internet, mas tente responder da melhor forma possível com seu conhecimento prévio.]`;
+            }
         }
 
         // 3. Analisa os resultados com o LLM
         const analysis = await llmRouter.complete(
-            [{ role: 'user', content: `Com base na pesquisa "${input.text}", analise estes resultados e crie um relatório conciso:\n\n${searchResults}` }],
+            [{ role: 'user', content: `Aqui está a solicitação do usuário: "${input.text}"\n\nE aqui estão as informações retornadas do sistema ou da internet:\n${searchResults}\n\nResponda diretamente ao usuário.` }],
             {
                 model: this.config.model,
                 systemPrompt: this.config.systemPrompt,
