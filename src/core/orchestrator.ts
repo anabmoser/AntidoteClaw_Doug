@@ -12,6 +12,7 @@ import type { DriveService } from '../services/drive.js';
 
 export class Orchestrator {
     private specialists: Specialist[] = [];
+    private activeSessions: Map<string, string> = new Map(); // senderId -> specialistName
     private driveService: DriveService | undefined;
 
     constructor(driveService?: DriveService) {
@@ -52,10 +53,40 @@ export class Orchestrator {
      * Verifica sessões ativas primeiro, depois por mediaType e por último triggers no texto.
      */
     findSpecialist(text: string, mediaType?: string, senderId?: string, inputMediaUrl?: string): Specialist | undefined {
-        // 1. Verifica se já existe uma sessão interativa travada neste usuário
+        const lower = text.toLowerCase().trim();
+        const exitCommands = ['/sair', 'sair', 'tchau', 'encerrar', 'voltar', 'cancelar'];
+
+        // 0. Verifica comandos de saída
+        if (senderId && exitCommands.includes(lower)) {
+            if (this.activeSessions.has(senderId)) {
+                const specName = this.activeSessions.get(senderId);
+                this.activeSessions.delete(senderId);
+                console.log(`[Orchestrator] 🔓 Sessão com ${specName} liberada para o usuário ${senderId}`);
+                return undefined; // Devolve para o Doug (Agent Genérico)
+            }
+        }
+
+        // 1. Verifica se chamou explicitamente um agente (ex: /social) e trava a sessão
+        const explicitTriggerSpec = this.specialists.find(s => s.matches(text));
+
         if (senderId) {
-            const activeSpec = this.specialists.find(s => s.hasActiveSession(senderId));
-            if (activeSpec) return activeSpec;
+            // Se usou um trigger explícito (comando com barra ou palavra forte de trigger), muda a sessão
+            if (explicitTriggerSpec && text.startsWith('/')) {
+                this.activeSessions.set(senderId, explicitTriggerSpec.config.name);
+                console.log(`[Orchestrator] 🔒 Sessão travada com ${explicitTriggerSpec.config.name} para o usuário ${senderId}`);
+                return explicitTriggerSpec;
+            }
+
+            // Se tem uma sessão ativa mantida pelo Orquestrador, envia tudo para ele
+            const activeSessionName = this.activeSessions.get(senderId);
+            if (activeSessionName) {
+                const activeSpec = this.specialists.find(s => s.config.name === activeSessionName);
+                if (activeSpec) return activeSpec;
+            }
+
+            // Fallback para especialistas que gerenciam a própria sessão internamente (legado)
+            const legacyActiveSpec = this.specialists.find(s => s.hasActiveSession(senderId));
+            if (legacyActiveSpec) return legacyActiveSpec;
         }
 
         // 2. Roteamento automático por tipo de mídia
@@ -70,7 +101,6 @@ export class Orchestrator {
             if (videoSpec) {
                 // Verifica se o texto menciona vídeo/transcrição ou se é só o arquivo
                 const videoTerms = ['transcrev', 'vídeo', 'video', 'editar', 'cortar', 'legenda', 'ffmpeg'];
-                const lower = text.toLowerCase();
                 const isVideoExtension = inputMediaUrl?.match(/\.(mp4|mov|mkv|avi|webm)$/i);
 
                 if (videoTerms.some(t => lower.includes(t)) || (text.trim() === '' && isVideoExtension)) {
@@ -81,7 +111,6 @@ export class Orchestrator {
 
         // 3. Roteamento por triggers do texto
         // Intercept: Evita rotear perguntas explícitas (que devem ser respondidas pela Memória do Agente)
-        const lower = text.toLowerCase().trim();
         const isQuestionPattern =
             lower.startsWith('o que') ||
             lower.startsWith('como') ||
@@ -100,7 +129,17 @@ export class Orchestrator {
             return undefined;
         }
 
-        return this.specialists.find(s => s.matches(text));
+        if (explicitTriggerSpec) {
+            // Trava a sessão caso tenha acionado um trigger forte (mesmo sem a barra, mas só se configurarmos assim)
+            // Para não prender acidentalmente, prendemos só se ele mandar um trigger isolado pequeno
+            if (senderId && lower.split(' ').length <= 3) {
+                this.activeSessions.set(senderId, explicitTriggerSpec.config.name);
+                console.log(`[Orchestrator] 🔒 Sessão travada com ${explicitTriggerSpec.config.name} (Acionamento Simples)`);
+            }
+            return explicitTriggerSpec;
+        }
+
+        return undefined;
     }
 
     /**
@@ -110,10 +149,11 @@ export class Orchestrator {
      */
     async tryProcess(
         incoming: IncomingMessage,
-        llmRouter: LLMRouter,
+        llmRouter: import('./llm/router.js').LLMRouter,
         context?: string,
         onProgress?: (message: string) => Promise<void>,
-        onSendFile?: (filePath: string, caption: string) => Promise<void>
+        onSendFile?: (filePath: string, caption: string) => Promise<void>,
+        recentHistory?: import('./types.js').LLMMessage[]
     ): Promise<OutgoingMessage | null> {
         const specialist = this.findSpecialist(incoming.text, incoming.mediaType, incoming.senderId, incoming.mediaUrl);
         if (!specialist) return null;
@@ -131,11 +171,15 @@ export class Orchestrator {
         if (onProgress) { input.onProgress = onProgress; }
         if (onSendFile) { input.onSendFile = onSendFile; }
         if (this.driveService) { input.driveService = this.driveService; }
+        if (recentHistory) { input.recentHistory = recentHistory; }
 
         try {
             const result = await specialist.run(input, llmRouter);
 
-            const response: OutgoingMessage = { text: result.text };
+            const response: OutgoingMessage = {
+                text: result.text,
+                specialist: specialist.config.name
+            };
             if (result.mediaUrl) { response.mediaUrl = result.mediaUrl; }
 
             return response;

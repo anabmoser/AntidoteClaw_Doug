@@ -73,6 +73,7 @@ export interface OutgoingMessage {
   text: string;
   mediaUrl?: string;
   buttons?: MessageButton[];
+  specialist?: string;
 }
 
 export interface MessageButton {

@@ -228,17 +228,25 @@ export class Agent {
                 }
             }
 
+            // Recuperar histórico recente antes do tryProcess para o Specialist ter contexto em casos de Handoff
+            const specialistHistory = this.memory.getRecentHistory(5).map(entry => ({
+                role: entry.role,
+                name: entry.role === 'assistant' ? entry.senderId : undefined, // Se for do assistente, envia o nome do Specialist que gerou
+                content: entry.content
+            } as LLMMessage));
+
             // 2.5. Tenta delegar a um Specialist
             const specialistResult = await this.orchestrator.tryProcess(
                 { ...incoming, text: cleanText },
                 this.llmRouter,
                 this.buildFullSystemPrompt(),
                 sendProgress,
-                sendFile
+                sendFile,
+                specialistHistory
             );
             if (specialistResult) {
                 await this.memory.addEntry('user', incoming.text, incoming.channel, incoming.senderId, this.llmRouter);
-                await this.memory.addEntry('assistant', specialistResult.text, incoming.channel, 'agent', this.llmRouter);
+                await this.memory.addEntry('assistant', specialistResult.text, incoming.channel, specialistResult.specialist || 'agent', this.llmRouter);
                 const elapsed = Date.now() - startTime;
                 console.log(`[Agent] Specialist respondeu em ${elapsed}ms`);
                 return specialistResult;

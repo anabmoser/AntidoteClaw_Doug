@@ -29,6 +29,7 @@ export interface SpecialistInput {
     mediaUrl?: string;
     mediaType?: 'image' | 'audio' | 'video' | 'document';
     context?: string;             // contexto adicional do orchestrator
+    recentHistory?: LLMMessage[]; // histórico recente para permitir handoffs entre agentes
     onProgress?: (message: string) => Promise<void>;  // callback para enviar status ao usuário
     onSendFile?: (filePath: string, caption: string) => Promise<void>;  // callback para enviar arquivo ao usuário
     driveService?: DriveService;  // Serviço opcional do Google Drive para salvar outputs
@@ -100,9 +101,8 @@ export abstract class Specialist {
      * Implementações concretas podem sobrescrever para lógica customizada.
      */
     async run(input: SpecialistInput, llmRouter: LLMRouter): Promise<SpecialistOutput> {
-        const messages: LLMMessage[] = [
-            { role: 'user', content: input.text },
-        ];
+        const messages: LLMMessage[] = input.recentHistory ? [...input.recentHistory] : [];
+        messages.push({ role: 'user', content: input.text });
 
         if (input.context) {
             messages.unshift({ role: 'system', content: input.context });
