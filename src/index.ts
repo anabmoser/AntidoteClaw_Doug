@@ -16,6 +16,7 @@ import { TelegramChannel } from './channels/telegram.js';
 import { Scheduler, Heartbeat } from './automation/scheduler.js';
 import { WebhookServer } from './automation/webhooks.js';
 import { weatherSkill } from './skills/builtin/weather.js';
+import { instagramInsightsSkill } from './skills/custom/instagram_insights.js';
 import { writerSpecialist } from './specialists/writer.js';
 import { DesignerSpecialist } from './specialists/designer.js';
 import { ScoutSpecialist } from './specialists/scout.js';
@@ -69,9 +70,10 @@ async function bootstrap(): Promise<void> {
 
     await agent.init();
 
-    // ─── Registra Skills Integradas ────────────────────────────
+    // ─── Registra Skills Integradas e Customizadas ─────────
 
     agent.getSkills().register(weatherSkill);
+    agent.getSkills().register(instagramInsightsSkill);
 
     // ─── Registra Specialists (Agentes Especializados) ─────────
 

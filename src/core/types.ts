@@ -129,6 +129,8 @@ export interface SkillInput {
   context: {
     senderId: string;
     channel: ChannelType;
+    mcpManager?: import('./mcp.js').McpManager;
+    llmRouter?: import('./llm/router.js').LLMRouter;
   };
 }
 

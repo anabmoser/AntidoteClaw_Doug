@@ -215,6 +215,8 @@ export class Agent {
                     context: {
                         senderId: incoming.senderId,
                         channel: incoming.channel,
+                        mcpManager: this.getMcpManager(),
+                        llmRouter: this.llmRouter,
                     },
                 });
 
