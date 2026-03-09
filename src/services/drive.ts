@@ -36,19 +36,27 @@ export class DriveService {
 
         let credentials;
         try {
-            credentials = JSON.parse(readFileSync(credPath, 'utf-8'));
+            if (process.env['GOOGLE_OAUTH_CREDENTIALS']) {
+                credentials = JSON.parse(process.env['GOOGLE_OAUTH_CREDENTIALS']);
+            } else {
+                credentials = JSON.parse(readFileSync(credPath, 'utf-8'));
+            }
         } catch (err: any) {
-            throw new Error(`[Drive] Erro ao ler google-oauth-credentials.json. O arquivo existe?`);
+            throw new Error(`[Drive] Erro ao carregar credenciais. Verifique a variável GOOGLE_OAUTH_CREDENTIALS ou o arquivo local.`);
         }
 
-        const { client_secret, client_id, redirect_uris } = credentials.installed;
-        const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
+        const { client_secret, client_id, redirect_uris } = credentials.installed || credentials.web || credentials;
+        const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris?.[0] || 'urn:ietf:wg:oauth:2.0:oob');
 
         let token;
         try {
-            token = JSON.parse(readFileSync(tokenPath, 'utf-8'));
+            if (process.env['GOOGLE_TOKEN']) {
+                token = JSON.parse(process.env['GOOGLE_TOKEN']);
+            } else {
+                token = JSON.parse(readFileSync(tokenPath, 'utf-8'));
+            }
         } catch (err: any) {
-            throw new Error(`[Drive] Erro ao ler google-token.json. Você já rodou o utils/auth-drive.js?`);
+            throw new Error(`[Drive] Erro ao carregar token de acesso. Verifique a variável GOOGLE_TOKEN ou o arquivo local.`);
         }
 
         oAuth2Client.setCredentials(token);
