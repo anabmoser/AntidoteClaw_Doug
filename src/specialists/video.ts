@@ -77,6 +77,10 @@ Priorize trechos sobre: esporte, educação, liderança, empoderamento.`,
         initialCuts: CutDefinition[]
     }>();
 
+    override hasActiveSession(senderId: string): boolean {
+        return this.pendingVideos.has(senderId);
+    }
+
     async run(input: SpecialistInput, llmRouter: LLMRouter): Promise<SpecialistOutput> {
         const progress = input.onProgress;
         const sourceId = input.senderId;
