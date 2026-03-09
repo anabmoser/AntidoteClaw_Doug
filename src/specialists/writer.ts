@@ -35,9 +35,8 @@ Ana Moser é ex-jogadora de vôlei, presidente do IEE (Instituto Esporte e Educa
 - Sempre pergunte se precisa de ajustes antes de finalizar
 - Formato padrão de legenda: gancho → desenvolvimento → CTA`,
             triggers: [
-                'escrever', 'criar texto', 'legenda', 'post',
-                'roteiro', 'caption', 'escribir', 'redação',
-                'criar conteúdo', 'conteúdo para', 'copy',
+                'escrever post', 'escrever legenda', 'criar texto', 'fazer post',
+                'nova legenda', 'fazer redação', 'escrever copy', 'novo texto',
                 '/writer', '/escrever'
             ],
             temperature: 0.8,

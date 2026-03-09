@@ -119,87 +119,87 @@ export class Orchestrator {
         const lower = text.toLowerCase().trim();
         const exitCommands = ['/sair', 'sair', 'tchau', 'encerrar', 'voltar', 'cancelar'];
 
-        // 0. Verifica comandos de saída
+        // 0. Verifica comandos de saída para limpar sessões
         if (senderId && exitCommands.includes(lower)) {
             if (this.activeSessions.has(senderId)) {
                 const specName = this.activeSessions.get(senderId);
                 this.activeSessions.delete(senderId);
                 console.log(`[Orchestrator] 🔓 Sessão com ${specName} liberada para o usuário ${senderId}`);
-                return undefined; // Devolve para o Doug (Agent Genérico)
+                return undefined;
             }
         }
 
-        // 1. Verifica se chamou explicitamente um agente (ex: /social) e trava a sessão
-        const explicitTriggerSpec = this.specialists.find(s => s.matches(text));
-
-        if (senderId) {
-            // Se usou um trigger explícito (comando com barra ou palavra forte de trigger), muda a sessão
-            if (explicitTriggerSpec && text.startsWith('/')) {
-                this.activeSessions.set(senderId, explicitTriggerSpec.config.name);
-                console.log(`[Orchestrator] 🔒 Sessão travada com ${explicitTriggerSpec.config.name} para o usuário ${senderId}`);
-                return explicitTriggerSpec;
+        // 1. Comandos com barra (Prioridade Absoluta Explicita)
+        if (text.startsWith('/')) {
+            const command = text.split(' ')[0]!.toLowerCase();
+            const slashSpec = this.specialists.find(s => s.config.triggers.includes(command));
+            if (slashSpec && senderId) {
+                this.activeSessions.set(senderId, slashSpec.config.name);
+                console.log(`[Orchestrator] 🔒 Sessão travada via comando explícito com ${slashSpec.config.name}`);
+                return slashSpec;
             }
+        }
 
-            // Se tem uma sessão ativa mantida pelo Orquestrador, envia tudo para ele
+        // 2. Roteamento automático por tipo de mídia ANTES DOS TRIGGERS
+        if (mediaType === 'video') {
+            const videoSpec = this.specialists.find(s => s.config.name === 'Video');
+            if (videoSpec) return videoSpec;
+        }
+
+        if (mediaType === 'document' && inputMediaUrl) {
+            const isVideoExtension = inputMediaUrl.match(/\.(mp4|mov|mkv|avi|webm)$/i);
+            if (isVideoExtension) {
+                const videoSpec = this.specialists.find(s => s.config.name === 'Video');
+                if (videoSpec) return videoSpec;
+            }
+        }
+
+        // 3. Respeitar a sessão ativa do usuário (Hand-off)
+        if (senderId) {
             const activeSessionName = this.activeSessions.get(senderId);
             if (activeSessionName) {
                 const activeSpec = this.specialists.find(s => s.config.name === activeSessionName);
                 if (activeSpec) return activeSpec;
             }
 
-            // Fallback para especialistas que gerenciam a própria sessão internamente (legado)
+            // Fallback legado do objeto interno do especialista
             const legacyActiveSpec = this.specialists.find(s => s.hasActiveSession(senderId));
             if (legacyActiveSpec) return legacyActiveSpec;
         }
 
-        // 2. Roteamento automático por tipo de mídia
-        if (mediaType === 'video') {
-            const videoSpec = this.specialists.find(s => s.config.name === 'Video');
-            if (videoSpec) return videoSpec;
-        }
-
-        // Documentos que são vídeos (enviados como arquivo no Telegram)
-        if (mediaType === 'document') {
-            const videoSpec = this.specialists.find(s => s.config.name === 'Video');
-            if (videoSpec) {
-                // Verifica se o texto menciona vídeo/transcrição ou se é só o arquivo
-                const videoTerms = ['transcrev', 'vídeo', 'video', 'editar', 'cortar', 'legenda', 'ffmpeg'];
-                const isVideoExtension = inputMediaUrl?.match(/\.(mp4|mov|mkv|avi|webm)$/i);
-
-                if (videoTerms.some(t => lower.includes(t)) || (text.trim() === '' && isVideoExtension)) {
-                    return videoSpec;
-                }
-            }
-        }
-
-        // 3. Roteamento por triggers do texto
-        // Intercept: Evita rotear perguntas explícitas (que devem ser respondidas pela Memória do Agente)
+        // 4. Se chegou aqui, não é mídia, não tem sessão e não tem slash command.
+        // Vamos checar triggers naturais, mas apenas se a frase não for uma pergunta solta para o Doug.
         const isQuestionPattern =
-            lower.startsWith('o que') ||
-            lower.startsWith('como') ||
-            lower.startsWith('qual') ||
-            lower.startsWith('quais') ||
-            lower.startsWith('onde') ||
-            lower.startsWith('quando') ||
-            lower.startsWith('lembra') ||
-            lower.startsWith('você lembra') ||
-            lower.startsWith('pera aí') ||
-            lower.startsWith('escuta') ||
-            lower.startsWith('espera');
+            lower.startsWith('o que') || lower.startsWith('como') ||
+            lower.startsWith('qual') || lower.startsWith('quais') ||
+            lower.startsWith('onde') || lower.startsWith('quando') ||
+            lower.startsWith('lembra') || lower.startsWith('você lembra') ||
+            lower.startsWith('pera aí') || lower.startsWith('escuta');
 
         if (isQuestionPattern && lower.includes('?')) {
             console.log(`[Orchestrator] 🛑 Roteamento retido: Detectada pergunta explícita para a memória.`);
             return undefined;
         }
 
-        if (explicitTriggerSpec) {
-            // Trava a sessão caso tenha acionado um trigger forte (mesmo sem a barra, mas só se configurarmos assim)
-            // Para não prender acidentalmente, prendemos só se ele mandar um trigger isolado pequeno
+        // Como o Writer intercepta muito, vamos avaliar a especialidade "Vídeo" antes do "Writer" para palavras-chave mistas
+        // Ordenamos os especialistas temporariamente para checagem:
+        const sortedSpecialists = [...this.specialists].sort((a, b) => {
+            if (a.config.name === 'Video') return -1;
+            if (b.config.name === 'Video') return 1;
+            if (a.config.name === 'Writer') return 1; // Joga pra baixo na prioridade
+            if (b.config.name === 'Writer') return -1;
+            return 0;
+        });
+
+        const naturalTriggerSpec = sortedSpecialists.find(s => s.matches(text));
+
+        if (naturalTriggerSpec) {
+            // Só trava a sessão no natural trigger se a instrução for mega curta e direta
             if (senderId && lower.split(' ').length <= 3) {
-                this.activeSessions.set(senderId, explicitTriggerSpec.config.name);
-                console.log(`[Orchestrator] 🔒 Sessão travada com ${explicitTriggerSpec.config.name} (Acionamento Simples)`);
+                this.activeSessions.set(senderId, naturalTriggerSpec.config.name);
+                console.log(`[Orchestrator] 🔒 Sessão travada com ${naturalTriggerSpec.config.name} (Acionamento Curto)`);
             }
-            return explicitTriggerSpec;
+            return naturalTriggerSpec;
         }
 
         return undefined;

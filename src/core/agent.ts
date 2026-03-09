@@ -297,7 +297,7 @@ export class Agent {
                     type: 'function',
                     function: {
                         name: 'gravityclaw_save_drive',
-                        description: 'Salva textos, ideias, planejamentos ou roteiros gerados diretamente no seu Google Drive (na pasta OUTPUTS/posts). Use isso BASTANTE quando o usuário te pedir para salvar algo, guardar no drive ou registrar o resultado final de uma interação com agentes.',
+                        description: 'Ferramenta de uso RESTRITO. Salva o texto no Google Drive do usuário. Você SÓ PODE usar esta ferramenta se o usuário EXIGIR ou PEDIR EXPLICITAMENTE para "salvar no drive", "guardar no drive" ou "criar arquivo no drive". NUNCA use esta ferramenta de forma proativa ou autônoma sem o comando claro.',
                         parameters: {
                             type: 'object',
                             properties: {
