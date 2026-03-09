@@ -323,8 +323,7 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                         try {
                             const folders = dService.getFolders();
                             if (folders) {
-                                const fileBuffer = readFileSync(clip.path);
-                                const uploadRes = await dService.uploadFile(`${clip.name}-${Date.now()}.mp4`, fileBuffer, 'video/mp4', folders.outputsVideos);
+                                const uploadRes = await dService.uploadFileStream(`${clip.name}-${Date.now()}.mp4`, clip.path, 'video/mp4', folders.outputsVideos);
                                 driveLink = `\n\n[☁️ Salvo no Drive: ${uploadRes.webViewLink} ]`;
                                 console.log(`[Video] ☁️ Upload Drive: ${clip.name}.mp4`);
                             }

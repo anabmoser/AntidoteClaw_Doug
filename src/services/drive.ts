@@ -6,7 +6,7 @@
  */
 
 import { google, type drive_v3 } from 'googleapis';
-import { readFileSync } from 'fs';
+import { readFileSync, createReadStream } from 'fs';
 import { Readable } from 'stream';
 
 export interface DriveFolderMap {
@@ -170,6 +170,37 @@ export class DriveService {
         });
 
         console.log(`[Drive] 📤 Upload: ${fileName} → ${res.data.id}`);
+        return {
+            id: res.data.id!,
+            webViewLink: res.data.webViewLink ?? `https://drive.google.com/file/d/${res.data.id}/view`,
+        };
+    }
+
+    /**
+     * Faz upload de um arquivo usando stream (ideal para vídeos/arquivos grandes).
+     */
+    async uploadFileStream(
+        fileName: string,
+        filePath: string,
+        mimeType: string,
+        folderId: string
+    ): Promise<{ id: string; webViewLink: string }> {
+        const media = {
+            mimeType,
+            body: createReadStream(filePath),
+        };
+
+        const res = await this.drive.files.create({
+            requestBody: {
+                name: fileName,
+                parents: [folderId],
+            },
+            media,
+            fields: 'id,webViewLink',
+            supportsAllDrives: true,
+        });
+
+        console.log(`[Drive] 📤 Upload (Stream): ${fileName} → ${res.data.id}`);
         return {
             id: res.data.id!,
             webViewLink: res.data.webViewLink ?? `https://drive.google.com/file/d/${res.data.id}/view`,
