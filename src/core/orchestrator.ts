@@ -117,17 +117,6 @@ export class Orchestrator {
      */
     findSpecialist(text: string, mediaType?: string, senderId?: string, inputMediaUrl?: string): Specialist | undefined {
         const lower = text.toLowerCase().trim();
-        const exitCommands = ['/sair', 'sair', 'tchau', 'encerrar', 'voltar', 'cancelar'];
-
-        // 0. Verifica comandos de saída para limpar sessões
-        if (senderId && exitCommands.includes(lower)) {
-            if (this.activeSessions.has(senderId)) {
-                const specName = this.activeSessions.get(senderId);
-                this.activeSessions.delete(senderId);
-                console.log(`[Orchestrator] 🔓 Sessão com ${specName} liberada para o usuário ${senderId}`);
-                return undefined;
-            }
-        }
 
         // 1. Comandos com barra (Prioridade Absoluta Explicita)
         if (text.startsWith('/')) {
@@ -194,10 +183,9 @@ export class Orchestrator {
         const naturalTriggerSpec = sortedSpecialists.find(s => s.matches(text));
 
         if (naturalTriggerSpec) {
-            // Só trava a sessão no natural trigger se a instrução for mega curta e direta
-            if (senderId && lower.split(' ').length <= 3) {
+            if (senderId) {
                 this.activeSessions.set(senderId, naturalTriggerSpec.config.name);
-                console.log(`[Orchestrator] 🔒 Sessão travada com ${naturalTriggerSpec.config.name} (Acionamento Curto)`);
+                console.log(`[Orchestrator] 🔒 Sessão travada com ${naturalTriggerSpec.config.name} (Acionamento Natural)`);
             }
             return naturalTriggerSpec;
         }
@@ -218,19 +206,49 @@ export class Orchestrator {
         onSendFile?: (filePath: string, caption: string) => Promise<void>,
         recentHistory?: import('./types.js').LLMMessage[]
     ): Promise<OutgoingMessage | null> {
+        const lower = incoming.text.toLowerCase().trim();
+        const exitCommands = [
+            '/sair', 'sair', 'tchau', 'encerrar', 'voltar', 'cancelar',
+            'tarefa finalizada', 'fim da tarefa', 'pode sair', 'finalizado', 'terminamos', '/terminar', 'tarefa concluída', 'tarefa concluida'
+        ];
+
+        // 0. Verifica se o usuário mandou finalizar a tarefa antes de qualquer roteamento
+        if (incoming.senderId && exitCommands.some(cmd => lower === cmd || lower.startsWith(cmd))) {
+            const activeSessionName = this.activeSessions.get(incoming.senderId);
+            const legacyActiveSpec = this.specialists.find(s => s.hasActiveSession(incoming.senderId!));
+            const specToExit = activeSessionName || legacyActiveSpec?.config.name;
+
+            if (specToExit) {
+                this.activeSessions.delete(incoming.senderId);
+
+                // Limpa estado interno caso seja agente que retém sessão própria
+                if (legacyActiveSpec && 'pendingVideos' in legacyActiveSpec) {
+                    (legacyActiveSpec as any).pendingVideos.delete(incoming.senderId);
+                }
+
+                console.log(`[Orchestrator] 🔓 Sessão com ${specToExit} encerrada pelo usuário (Comando: ${lower}).`);
+                return {
+                    text: `[SISTEMA] 🔓 Tarefa finalizada. O especialista **${specToExit}** saiu da conversa.\n\nDoug (Controle Central) assumindo novamente. O que faremos agora?`
+                };
+            }
+        }
+
         const specialist = this.findSpecialist(incoming.text, incoming.mediaType, incoming.senderId, incoming.mediaUrl);
         if (!specialist) return null;
 
         console.log(`[Orchestrator] 🎯 Roteando para: ${specialist.config.name}`);
 
+        // Rastreia se acabamos de travar a sessão nesta requisição (para dar feedback)
+        const isNewSession = incoming.senderId && this.activeSessions.get(incoming.senderId) === specialist.config.name && (!recentHistory || recentHistory.length === 0 || recentHistory[recentHistory.length - 1]?.name !== specialist.config.name);
+
         // Intercepta chamadas "vazias" (apenas o gatilho) para dar boas-vindas na sessão
-        const cleanText = incoming.text.toLowerCase().trim().replace(/^[^\w\/]+/, ''); // remove ?, ! no começo mas mantém /
-        const isJustTrigger = specialist.config.triggers.some(t => t.toLowerCase() === cleanText || t.toLowerCase() === incoming.text.toLowerCase().trim());
+        const cleanText = lower.replace(/^[^\w\/]+/, ''); // remove ?, ! no começo mas mantém /
+        const isJustTrigger = specialist.config.triggers.some(t => t.toLowerCase() === cleanText || t.toLowerCase() === lower);
 
         if (isJustTrigger && !incoming.mediaUrl) {
             console.log(`[Orchestrator] 🚪 Gatilho puro detectado. Iniciando sessão focada sem rodar LLM.`);
             return {
-                text: `[SISTEMA] Sessão focada iniciada com o especialista **${specialist.config.name}**. 🎯\n\nEnvie o material, link ou as instruções que deseja trabalhar.\n*(Para liberar o especialista depois, digite /sair ou tchau)*`,
+                text: `[SISTEMA] 🔒 Sessão focada iniciada com o especialista **${specialist.config.name}**. 🎯\n\nNós trabalharemos juntos nesta tarefa até terminarmos. Envie as instruções de trabalho.\n*(Para encerrar a conversa e devolver para o Doug, digite "tarefa finalizada" ou "sair")*`,
                 specialist: specialist.config.name
             };
         }
@@ -251,8 +269,13 @@ export class Orchestrator {
         try {
             const result = await specialist.run(input, llmRouter);
 
+            let finalText = result.text;
+            if (isNewSession && !isJustTrigger) {
+                finalText = `_[SISTEMA] 🔒 **${specialist.config.name}** assumiu a conversa. Para encerrar a sessão depois, digite "tarefa finalizada"._\n\n` + finalText;
+            }
+
             const response: OutgoingMessage = {
-                text: result.text,
+                text: finalText,
                 specialist: specialist.config.name
             };
             if (result.mediaUrl) { response.mediaUrl = result.mediaUrl; }
