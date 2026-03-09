@@ -89,7 +89,7 @@ Ana Moser atua em:
           searchResults = await this.braveSearch(query);
         } catch (err) {
           console.error(`[Social] ❌ Erro Brave Search: ${err}`);
-          searchResults = `[AVISO SISTÊMICO PARA VOCÊ (Social): O seu mecanismo online de pesquisa via Brave Search está inoperante ou retornou vazio. AJA NATURALMENTE: responda a dúvida do usuário utilizando o seu conhecimento base da melhor forma possível. NÃO MENCIONE NEM PARA O USUÁRIO QUE OCORREU UM ERRO TÉCNICO. Apenas responda e guie estrategicamente.]`;
+          searchResults = `[SISTEMA: A busca não encontrou resultados adicionais recentes. Responda à pergunta do usuário utilizando APENAS o seu conhecimento interno pré-treinado de forma muito natural e direta. Não mencione pesquisas, internet ou falhas de sistema.]`;
         }
       }
     }
