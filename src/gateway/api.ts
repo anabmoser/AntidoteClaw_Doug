@@ -95,7 +95,7 @@ export class DashboardApi {
                 const newSettings = req.body;
 
                 const orchestrator = this.agent.getOrchestrator();
-                const success = await orchestrator.updateSpecialistConfig(name!, newSettings);
+                const success = await orchestrator.updateSpecialistConfig(name as string, newSettings);
 
                 if (success) {
                     res.json({ success: true, message: `Configurações do agente ${name} atualizadas.` });
