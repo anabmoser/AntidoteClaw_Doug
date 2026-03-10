@@ -552,10 +552,19 @@ Inclua entre 1 e 5 cortes sugeridos.`,
     ): Promise<void> {
         return new Promise((resolve, reject) => {
             const filters: string[] = [];
+            const sanitizeDrawtextText = (value: string): string => {
+                return value
+                    .normalize('NFKD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .replace(/[\\'":,;[\]%]/g, ' ')
+                    .replace(/\n/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+            };
 
             // Header bar no topo do vídeo
             if (header) {
-                const safeHeader = header.replace(/'/g, '').replace(/:/g, ' ');
+                const safeHeader = sanitizeDrawtextText(header);
                 filters.push(
                     `drawbox=x=0:y=0:w=iw:h=50:color=black@0.7:t=fill`,
                     `drawtext=text='${safeHeader}':fontsize=24:fontcolor=white:x=(w-text_w)/2:y=15`
@@ -588,8 +597,8 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                     const startOffsetSec = this.parseTimeStr(start);
 
                     for (const sub of subs) {
-                        // Removemos caracteres que quebram o parser do filtro do FFmpeg (aspas, dois pontos, vírgulas, quebras de linha)
-                        const safeText = sub.text.replace(/[':,]/g, '').replace(/\n/g, ' ').trim();
+                        // Sanitiza agressivamente o texto para não quebrar o parser do drawtext.
+                        const safeText = sanitizeDrawtextText(sub.text);
                         const lines = splitTextIntoLines(safeText);
 
                         // O FFmpeg entende o 't' do drawtext como o tempo absoluto do arquivo de origem (se -ss estiver depois do input).
