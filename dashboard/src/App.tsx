@@ -3,7 +3,7 @@ import { LayoutDashboard, Settings2, Plus, TerminalSquare, Network, Activity, Da
 import classNames from 'classnames';
 import axios from 'axios';
 
-const API_BASE = 'http://localhost:3000/api';
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:3000/api';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'overview' | 'skills' | 'mcp' | 'agents'>('overview');

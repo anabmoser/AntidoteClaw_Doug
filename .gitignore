@@ -4,6 +4,8 @@ dist/
 data/memory/
 data/google-service-account.json
 .tmp/
+.tmp_npm_cache/
+.puppeteer_cache/
 *.log
 .DS_Store
 data/google-token.json

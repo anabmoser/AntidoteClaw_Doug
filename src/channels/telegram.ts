@@ -8,6 +8,7 @@
 
 import type { Channel, ChannelType, IncomingMessage, OutgoingMessage, MessageButton } from '../core/types.js';
 import { v4 as uuid } from 'uuid';
+import { openAsBlob } from 'fs';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 
@@ -116,7 +117,9 @@ export class TelegramChannel implements Channel {
             }
             : undefined;
 
-        if (message.mediaUrl) {
+        if (message.mediaBuffer) {
+            await this.sendBinaryMedia(chatId, message);
+        } else if (message.mediaUrl) {
             // Tenta enviar como foto
             await this.apiCall('sendPhoto', {
                 chat_id: chatId,
@@ -293,39 +296,9 @@ export class TelegramChannel implements Channel {
         // Cria callback para enviar arquivos de vídeo
         const sendFile = async (filePath: string, caption: string): Promise<void> => {
             try {
-                const { createReadStream } = await import('fs');
-                const FormData = (await import('node:buffer')).Blob ? null : null;
-                // Usa multipart form para enviar vídeo
-                const fileStream = createReadStream(filePath);
-                const boundary = '----FormBoundary' + Math.random().toString(36).slice(2);
-                const { readFileSync } = await import('fs');
-                const fileBuffer = readFileSync(filePath);
                 const fileName = filePath.split('/').pop() ?? 'video.mp4';
-
-                const parts: Buffer[] = [];
-                parts.push(Buffer.from(
-                    `--${boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n${msg.chat.id}\r\n`
-                ));
-                parts.push(Buffer.from(
-                    `--${boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${caption}\r\n`
-                ));
-                parts.push(Buffer.from(
-                    `--${boundary}\r\nContent-Disposition: form-data; name="video"; filename="${fileName}"\r\nContent-Type: video/mp4\r\n\r\n`
-                ));
-                parts.push(fileBuffer);
-                parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
-
-                const body = Buffer.concat(parts);
-                const url = `${TELEGRAM_API}/bot${this.token}/sendVideo`;
-                const res = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
-                    body: new Uint8Array(body),
-                });
-                if (!res.ok) {
-                    const errText = await res.text();
-                    console.error(`[Telegram] Erro sendVideo: ${errText}`);
-                }
+                const videoBlob = await openAsBlob(filePath, { type: 'video/mp4' });
+                await this.sendMultipartMedia('sendVideo', 'video', msg.chat.id, videoBlob, fileName, caption);
             } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
                 console.error(`[Telegram] Erro ao enviar arquivo: ${errMsg}`);
@@ -367,6 +340,46 @@ export class TelegramChannel implements Channel {
     private async getFileUrl(fileId: string): Promise<string> {
         const file = await this.apiCall('getFile', { file_id: fileId }) as { file_path: string };
         return `${TELEGRAM_API}/file/bot${this.token}/${file.file_path}`;
+    }
+
+    private async sendBinaryMedia(chatId: number, message: OutgoingMessage): Promise<void> {
+        const mimeType = message.mediaMimeType ?? 'image/png';
+        const fileName = message.mediaFileName ?? (mimeType.startsWith('image/') ? 'image.png' : 'arquivo.bin');
+        const method = mimeType.startsWith('image/') ? 'sendPhoto' : 'sendDocument';
+        const fieldName = mimeType.startsWith('image/') ? 'photo' : 'document';
+
+        await this.sendMultipartMedia(
+            method,
+            fieldName,
+            chatId,
+            new Blob([new Uint8Array(message.mediaBuffer!)], { type: mimeType }),
+            fileName,
+            message.text
+        );
+    }
+
+    private async sendMultipartMedia(
+        method: string,
+        mediaFieldName: string,
+        chatId: number,
+        media: Blob,
+        fileName: string,
+        caption?: string
+    ): Promise<void> {
+        const form = new FormData();
+        form.set('chat_id', String(chatId));
+        if (caption) form.set('caption', caption);
+        form.set(mediaFieldName, media, fileName);
+
+        const res = await fetch(`${TELEGRAM_API}/bot${this.token}/${method}`, {
+            method: 'POST',
+            body: form,
+        });
+
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`Telegram API ${method} falhou (${res.status}): ${errText}`);
+        }
     }
 
     private sleep(ms: number): Promise<void> {

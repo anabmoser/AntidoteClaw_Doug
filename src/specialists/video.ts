@@ -15,8 +15,10 @@ import { Specialist, type SpecialistInput, type SpecialistOutput } from '../core
 import type { LLMRouter } from '../core/llm/router.js';
 import type { DriveService } from '../services/drive.js';
 import { execFile } from 'child_process';
-import { writeFileSync, readFileSync, unlinkSync, mkdirSync, existsSync } from 'fs';
+import { createReadStream, createWriteStream, readFileSync, unlinkSync, mkdirSync, existsSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 
 // Importa ffmpeg-static (binário portátil com todas as libs, incluindo freetype)
 import ffmpegPath from 'ffmpeg-static';
@@ -79,6 +81,14 @@ Priorize trechos sobre: esporte, educação, liderança, empoderamento.`,
 
     override hasActiveSession(senderId: string): boolean {
         return this.pendingVideos.has(senderId);
+    }
+
+    override clearSession(senderId: string): void {
+        const pending = this.pendingVideos.get(senderId);
+        if (pending?.inputPath) {
+            try { unlinkSync(pending.inputPath); } catch { /* ignore */ }
+        }
+        this.pendingVideos.delete(senderId);
     }
 
     async run(input: SpecialistInput, llmRouter: LLMRouter): Promise<SpecialistOutput> {
@@ -150,22 +160,20 @@ Formato:
                     await progress('🎬 *Video Agent ativado!*\n\n📥 Baixando o vídeo para edição...');
                 }
 
-                const fileBuffer = await this.downloadFile(input.mediaUrl);
-                const sizeMB = (fileBuffer.byteLength / 1024 / 1024).toFixed(1);
-                console.log(`[Video] ✅ Download: ${sizeMB}MB`);
-
-                // Salva no temp para FFmpeg
                 const tempDir = join(process.cwd(), '.tmp', 'video');
                 if (!existsSync(tempDir)) mkdirSync(tempDir, { recursive: true });
                 const inputPath = join(tempDir, `input-${Date.now()}.mp4`);
-                writeFileSync(inputPath, fileBuffer);
+
+                const sizeBytes = await this.downloadFileToPath(input.mediaUrl, inputPath);
+                const sizeMB = (sizeBytes / 1024 / 1024).toFixed(1);
+                console.log(`[Video] ✅ Download: ${sizeMB}MB`);
 
                 if (progress) {
                     await progress(`✅ Download (${sizeMB}MB)\n📤 Enviando para transcrição...`);
                 }
 
                 // === FASE 2: Upload + Transcrição ===
-                const uploadUrl = await this.uploadToAssemblyAI(fileBuffer);
+                const uploadUrl = await this.uploadToAssemblyAIFromPath(inputPath);
                 if (progress) await progress('📝 Transcrevendo áudio... (1-2 min)');
 
                 const transcript = await this.transcribe(uploadUrl, progress);
@@ -321,25 +329,24 @@ Inclua entre 1 e 5 cortes sugeridos.`,
 
                 for (const clip of clipPaths) {
                     let driveLink = '';
+                    let driveWarning = '';
                     const dService = input.driveService ?? this.drive;
 
                     if (dService) {
                         try {
-                            const folders = dService.getFolders();
-                            if (folders) {
-                                const uploadRes = await dService.uploadFileStream(`${clip.name}-${Date.now()}.mp4`, clip.path, 'video/mp4', folders.outputsVideos);
-                                driveLink = `\n\n[☁️ Salvo no Drive: ${uploadRes.webViewLink} ]`;
-                                console.log(`[Video] ☁️ Upload Drive: ${clip.name}.mp4`);
-                            }
+                            const uploadRes = await dService.saveVideoAsset(`${clip.name}-${Date.now()}.mp4`, clip.path, 'video/mp4');
+                            driveLink = `\n\n[☁️ Salvo no Drive: ${uploadRes.webViewLink} ]`;
+                            console.log(`[Video] ☁️ Upload Drive: ${clip.name}.mp4`);
                         } catch (err) {
                             console.error(`[Video] ⚠️ Erro no Drive para ${clip.name}:`, err);
+                            driveWarning = `\n\n[⚠️ ${clip.name} gerado, mas o upload no Drive falhou.]`;
                         }
                     }
 
                     try {
                         let caption = `✂️ ${clip.name}: ${clip.description}`;
                         if (clip.header) { caption = `📌 ${clip.header}\n\n${caption}`; }
-                        caption += driveLink;
+                        caption += `${driveLink}${driveWarning}`;
                         await sendFile(clip.path, caption);
                         console.log(`[Video] 📤 Enviado: ${clip.name}.mp4`);
                     } catch (sendErr) {
@@ -554,20 +561,23 @@ Inclua entre 1 e 5 cortes sugeridos.`,
         console.log(`[Video] 📝 SRT gerado: ${outputPath} (${subtitles.length} legendas)`);
     }
 
-    private async downloadFile(url: string): Promise<Buffer> {
+    private async downloadFileToPath(url: string, outputPath: string): Promise<number> {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`Download falhou: ${res.status} ${res.statusText}`);
-        return Buffer.from(await res.arrayBuffer());
+        if (!res.body) throw new Error('Download retornou body vazio.');
+
+        await pipeline(Readable.fromWeb(res.body as any), createWriteStream(outputPath));
+        return statSync(outputPath).size;
     }
 
-    private async uploadToAssemblyAI(fileBuffer: Buffer): Promise<string> {
+    private async uploadToAssemblyAIFromPath(filePath: string): Promise<string> {
         const res = await fetch('https://api.assemblyai.com/v2/upload', {
             method: 'POST',
             headers: {
                 'Authorization': this.assemblyaiKey,
                 'Content-Type': 'application/octet-stream',
             },
-            body: new Uint8Array(fileBuffer),
+            body: createReadStream(filePath) as any,
         });
         if (!res.ok) {
             const errText = await res.text();

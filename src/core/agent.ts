@@ -333,13 +333,9 @@ export class Agent {
                         // Ferramenta Nativa: Google Drive
                         if (tc.function.name === 'gravityclaw_save_drive' && this.driveService) {
                             const { title, content } = JSON.parse(tc.function.arguments);
-                            const folders = this.driveService.getFolders();
-                            let targetFolder = folders?.outputsPosts;
-                            if (!targetFolder && folders?.root) targetFolder = folders.root;
-
                             let textResult = '';
-                            if (targetFolder) {
-                                const res = await this.driveService.saveText(title, content, targetFolder);
+                            if (this.driveService.getFolders()) {
+                                const res = await this.driveService.saveAgentText(title, content);
                                 textResult = `[SISTEMA] Sucesso! Documento "${title}" salvo no seu Google Drive (Pasta OUTPUTS/posts). Link: ${res.webViewLink}. Comunique esse link ao usuário!`;
                             } else {
                                 textResult = `[ERRO] Google Drive não mapeou a pasta de outputs.`;

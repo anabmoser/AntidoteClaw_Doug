@@ -76,6 +76,14 @@ export abstract class Specialist {
     }
 
     /**
+     * Limpa qualquer sessão interativa retida internamente por este specialist.
+     * O Orchestrator chama isso ao encerrar ou transferir tarefas.
+     */
+    clearSession(senderId: string): void {
+        // noop por padrão
+    }
+
+    /**
      * Verifica se este specialist deve ser ativado para o texto dado.
      */
     matches(text: string): boolean {

@@ -72,6 +72,9 @@ export interface OutgoingMessage {
   channelMessageId?: string;
   text: string;
   mediaUrl?: string;
+  mediaBuffer?: Buffer;
+  mediaMimeType?: string;
+  mediaFileName?: string;
   buttons?: MessageButton[];
   specialist?: string;
 }

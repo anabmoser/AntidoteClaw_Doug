@@ -10,7 +10,7 @@ import * as path from 'node:path';
 
 export class DashboardApi {
     private app = express();
-    private port = process.env.DASHBOARD_PORT || 3000;
+    private port = process.env.PORT || process.env.DASHBOARD_PORT || 3000;
 
     constructor(
         private agent: Agent,
@@ -24,6 +24,18 @@ export class DashboardApi {
         // Enable CORS for all routes (Dashboard frontend is on 5173)
         this.app.use(cors());
         this.app.use(express.json());
+
+        this.app.get('/', (req: Request, res: Response) => {
+            res.json({
+                service: 'Doug Dashboard API',
+                status: 'online',
+                version: '1.1.0',
+            });
+        });
+
+        this.app.get('/health', (req: Request, res: Response) => {
+            res.json({ status: 'ok' });
+        });
 
         // --- 1. System Status ---
         this.app.get('/api/agent/status', (req: Request, res: Response) => {
@@ -109,9 +121,36 @@ export class DashboardApi {
 
         // --- 5. Skill Creator ---
         this.app.post('/api/skills/create', (req: Request, res: Response) => {
-            const { name, description, triggerRegex, actionCode } = req.body;
+            const {
+                name,
+                description,
+                triggerRegex,
+                actionCode,
+                triggers,
+                prompt,
+            } = req.body;
 
-            if (!name || !description || !triggerRegex || !actionCode) {
+            const normalizedTriggers = Array.isArray(triggers)
+                ? triggers.filter(Boolean).map((t: unknown) => String(t).trim()).filter(Boolean)
+                : [];
+            const effectiveTriggerRegex = triggerRegex || (normalizedTriggers.length > 0
+                ? normalizedTriggers.map((t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+                : null);
+            const effectiveActionCode = actionCode || (prompt
+                ? `
+        const llmRouter = context.context.llmRouter;
+        if (!llmRouter) {
+            return { text: 'LLM indisponível para esta skill no momento.' };
+        }
+        const response = await llmRouter.complete(
+            [{ role: 'user', content: \`${String(prompt).replace(/`/g, '\\`')}\n\nPedido do usuário: \${context.rawText}\` }],
+            { temperature: 0.4 }
+        );
+        return { text: response.content };
+        `
+                : null);
+
+            if (!name || !description || !effectiveTriggerRegex || !effectiveActionCode) {
                 return res.status(400).json({ error: 'Missing required fields' });
             }
 
@@ -134,9 +173,9 @@ export const skill: Skill = {
     name: '${name}',
     version: '1.0.0',
     description: '${description}',
-    matches: (text) => /${triggerRegex}/i.test(text),
+    triggers: ${JSON.stringify(normalizedTriggers)},
     execute: async (context) => {
-        ${actionCode}
+        ${effectiveActionCode}
     }
 };
 `;

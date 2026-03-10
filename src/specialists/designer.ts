@@ -1,210 +1,279 @@
 /**
  * GravityClaw — Designer Specialist
  *
- * Gera imagens e slides usando Leonardo.ai API.
- * Usa Gemini 3.1 Pro para formular prompts visuais.
+ * Gera imagens e banners usando Leonardo.ai e HTML/CSS.
+ * Prioriza banner com texto e moldura como caso principal.
  */
 
 import { Specialist, type SpecialistInput, type SpecialistOutput } from '../core/specialist.js';
 import type { LLMRouter } from '../core/llm/router.js';
 import { bannerTemplate } from '../templates/banner.js';
 import { createRequire } from 'module';
+
 const require = createRequire(import.meta.url);
 const nodeHtmlToImage = require('node-html-to-image');
 
 const LEONARDO_API = 'https://cloud.leonardo.ai/api/rest/v1';
 
+type DesignerMode = 'imagem' | 'banner';
+
+interface DesignerSession {
+    step: 'awaiting_mode' | 'awaiting_prompt' | 'editing_existing';
+    selectedMode?: DesignerMode;
+    lastPrompt?: string;
+    lastBannerCopy?: BannerCopy;
+    lastImageUrl?: string;
+}
+
+interface BannerCopy {
+    title: string | null;
+    number: string | null;
+    body: string;
+    highlight: string | null;
+    isQuote: boolean;
+    bgColor: string;
+    accentColor: string;
+    fontColor: string | null;
+    frameStyle: 'accent' | 'clean' | 'double';
+}
+
 export class DesignerSpecialist extends Specialist {
     private leonardoApiKey: string;
-
-    private pendingSessions = new Map<string, {
-        step: 'awaiting_mode' | 'awaiting_prompt',
-        selectedMode?: 'imagem' | 'banner'
-    }>();
+    private pendingSessions = new Map<string, DesignerSession>();
 
     constructor(leonardoApiKey: string) {
         super({
             name: 'Designer',
-            description: 'Gera imagens visuais (Leonardo.ai) ou Banners Textuais (HTML Dinâmico).',
+            description: 'Gera imagens visuais (Leonardo.ai) ou banners textuais com moldura em HTML/CSS.',
             model: 'google/gemini-3.1-pro-preview',
             systemPrompt: `Você é o Designer, especialista em criação visual para a Ana Moser.
 
-## Suas Capacidades (Dois Modos)
-1. **Modo Ilustração**: Para fotos, ilustrações realistas, cenários. Usamos a API do Leonardo.ai.
-2. **Modo Banner**: Para slides com textos e frases (ex: frases de motivação, autismo, comprometimento). Usamos um motor HTML para escrever a tipografia perfeitamente.
+## Capacidades
+1. Modo Banner: peças com texto, tarja, moldura, destaque e composição previsível.
+2. Modo Ilustração: imagens via Leonardo.ai, sem texto escrito.
+3. Continuação: quando o usuário trouxer ajuste para uma peça já criada, preserve o contexto da tarefa.
 
 ## Regras
-- Se o usuário pedir um texto escrito na imagem, banner, post ou slide com texto: use o MODO BANNER.
-- Se pedir imagem pura, arte livre, fotografia: use o MODO ILUSTRAÇÃO.
-- Responda brevemente descrevendo o que vai fazer antes de chamar as funções.`,
+- Se o usuário pedir texto escrito na peça, banner, moldura, box, aspas, frase, citação ou slide: use MODO BANNER.
+- Se o usuário pedir imagem artística/fotográfica sem texto: use MODO ILUSTRAÇÃO.
+- Responda com clareza curta e preserve o contexto quando a tarefa já estiver em andamento.`,
             triggers: [
                 'criar imagem', 'gerar imagem', 'design', 'slide',
                 'imagem de', 'foto de', 'visual', 'banner',
                 'ilustração', 'arte', 'thumbnail', 'post escrito', 'frase',
-                '/designer', '/imagem', 'escrever na imagem'
+                'moldura', 'tarja', '/designer', '/imagem', 'escrever na imagem'
             ],
-            temperature: 0.6,
-            maxTokens: 1500,
+            temperature: 0.5,
+            maxTokens: 1800,
         });
         this.leonardoApiKey = leonardoApiKey;
     }
 
-    hasActiveSession(senderId: string): boolean {
+    override hasActiveSession(senderId: string): boolean {
         return this.pendingSessions.has(senderId);
+    }
+
+    override clearSession(senderId: string): void {
+        this.pendingSessions.delete(senderId);
     }
 
     async run(input: SpecialistInput, llmRouter: LLMRouter): Promise<SpecialistOutput> {
         const sourceId = input.senderId;
+        const session = this.pendingSessions.get(sourceId);
+        const normalizedText = input.text.trim();
+        const lower = normalizedText.toLowerCase();
 
-        // 0. Processamento de Sessão Interativa Ativa
-        if (this.pendingSessions.has(sourceId)) {
-            const session = this.pendingSessions.get(sourceId)!;
-            const text = input.text.toLowerCase().trim();
-
-            // Opção de cancelar o menu
-            if (text === 'cancelar' || text === 'sair' || text === 'voltar') {
+        if (session) {
+            if (lower === 'cancelar' || lower === 'sair' || lower === 'voltar') {
                 this.pendingSessions.delete(sourceId);
-                return { text: '❌ Menu do Designer cancelado. Pode me pedir outra coisa.' };
+                return { text: '❌ Sessão do Designer cancelada. O Doug pode encaminhar a próxima tarefa.' };
             }
 
             if (session.step === 'awaiting_mode') {
-                if (text === '1' || text.includes('imagem') || text.includes('foto') || text.includes('ilustra')) {
-                    session.selectedMode = 'imagem';
-                    session.step = 'awaiting_prompt';
-                    return { text: '🎨 **Modo Ilustração Selecionado**\nÓtimo! Vou gerar uma ilustração via AI. O que você gostaria de ver na imagem? (Me dê detalhes ou envie um prompt)' };
-                } else if (text === '2' || text.includes('banner') || text.includes('texto') || text.includes('slide')) {
-                    session.selectedMode = 'banner';
-                    session.step = 'awaiting_prompt';
-                    return { text: '✍️ **Modo Banner Selecionado**\nPerfeito! Vou criar um slide usando as cores e a fonte oficiais. Qual é o título e o texto da mensagem?' };
-                } else {
-                    return { text: 'Não entendi. Por favor, responda apenas com **1** (para Imagem AI) ou **2** (para Banner com Texto), ou digite "cancelar".' };
+                const selectedMode = this.resolveInteractiveMode(normalizedText);
+                if (!selectedMode) {
+                    return { text: 'Responda com **1** para ilustração ou **2** para banner com texto e moldura. Se preferir, diga "cancelar".' };
                 }
+
+                session.selectedMode = selectedMode;
+                session.step = 'awaiting_prompt';
+                return {
+                    text: selectedMode === 'banner'
+                        ? '✍️ **Modo Banner Selecionado**\nEnvie o texto da peça, e se quiser, já diga cor, moldura, destaque ou ajustes de layout.'
+                        : '🎨 **Modo Ilustração Selecionado**\nEnvie a descrição da imagem que devo criar.'
+                };
             }
 
             if (session.step === 'awaiting_prompt') {
-                const mode = session.selectedMode;
-                this.pendingSessions.delete(sourceId); // Finaliza o menu interativo
-
-                if (mode === 'banner') {
-                    return this.runBannerMode(input, llmRouter);
-                } else {
-                    return this.runImageMode(input, llmRouter);
+                session.lastPrompt = normalizedText;
+                if (session.selectedMode === 'banner') {
+                    const result = await this.runBannerMode(input, llmRouter, session);
+                    session.step = 'editing_existing';
+                    return result;
                 }
+
+                const result = await this.runImageMode(input, llmRouter, session);
+                session.step = 'editing_existing';
+                return result;
+            }
+
+            if (session.step === 'editing_existing') {
+                const inferredMode = session.selectedMode ?? await this.classifyMode(normalizedText, llmRouter);
+                session.selectedMode = inferredMode;
+                session.lastPrompt = normalizedText;
+
+                if (inferredMode === 'banner') {
+                    const result = await this.runBannerMode(input, llmRouter, session);
+                    return result;
+                }
+
+                return this.runImageMode(input, llmRouter, session);
             }
         }
 
-        // 1. Menu Inicial (Acionado apenas se o comando for direto e sem prompt adicional)
-        const cleanInput = input.text.replace(/\/designer/i, '').replace(/\/imagem/i, '').trim();
-
+        const cleanInput = normalizedText.replace(/\/designer/i, '').replace(/\/imagem/i, '').trim();
         if (cleanInput === '' || cleanInput.length < 5) {
             this.pendingSessions.set(sourceId, { step: 'awaiting_mode' });
             return {
-                text: `🎨 **Bem-vindo ao Estúdio do Designer!**\nO que você quer criar neste momento?\n\n1️⃣ **Ilustração (AI)**: Fotos realistas, concept art, abstrato.\n2️⃣ **Banner (Texto)**: Slide estruturado com a tipografia oficial e frases.\n\nResponda com **1** ou **2**.`
+                text: '🎨 **Estúdio do Designer**\n1️⃣ Ilustração AI\n2️⃣ Banner com texto e moldura\n\nResponda com **1** ou **2**.'
             };
         }
 
-        // 2. Fluxo Tradicional "Tudo de uma Vez" (O usuário mandou o prompt direto, delegamos ao LLM classificar)
-        const intentResult = await llmRouter.complete(
-            [{
-                role: 'user', content: `Analise este pedido: "${input.text}".
-Regras estritas de classificação:
-1. Se o usuário pedir um "slide", "post", "banner", "escrever" algo, "frase", ou "texto": responda modo_banner.
-2. Se o usuário pedir apenas uma imagem puramente artística, fotografia realista sem menção a texto explícito: responda modo_imagem.
-Qual é a intenção? Responda APENAS com modo_imagem ou modo_banner.` }],
-            { model: this.config.model, maxTokens: 50, temperature: 0.1 }
-        );
+        const selectedMode = await this.classifyMode(cleanInput, llmRouter);
+        const nextSession: DesignerSession = {
+            step: 'editing_existing',
+            selectedMode,
+            lastPrompt: cleanInput,
+        };
+        this.pendingSessions.set(sourceId, nextSession);
 
-        const mode = intentResult.content.trim().toLowerCase().includes('banner') ? 'banner' : 'imagem';
-        console.log(`[Designer] 🎨 Modo de Geração Automático Escolhido via LLM: ${mode}`);
-
-        if (mode === 'banner') {
-            return this.runBannerMode(input, llmRouter);
-        } else {
-            return this.runImageMode(input, llmRouter);
+        if (selectedMode === 'banner') {
+            return this.runBannerMode({ ...input, text: cleanInput }, llmRouter, nextSession);
         }
+
+        return this.runImageMode({ ...input, text: cleanInput }, llmRouter, nextSession);
     }
 
-    private async runBannerMode(input: SpecialistInput, llmRouter: LLMRouter): Promise<SpecialistOutput> {
-        // O LLM age como Redator
+    private resolveInteractiveMode(text: string): DesignerMode | null {
+        const lower = text.toLowerCase().trim();
+        if (lower === '1' || lower.includes('imagem') || lower.includes('foto') || lower.includes('ilustra')) return 'imagem';
+        if (lower === '2' || lower.includes('banner') || lower.includes('texto') || lower.includes('moldura') || lower.includes('slide')) return 'banner';
+        return null;
+    }
+
+    private async classifyMode(text: string, llmRouter: LLMRouter): Promise<DesignerMode> {
+        const intentResult = await llmRouter.complete(
+            [{
+                role: 'user',
+                content: `Analise este pedido: "${text}".
+Regras:
+1. Se houver banner, frase, texto, escrever, moldura, tarja, post ou slide: responda APENAS com modo_banner.
+2. Se for imagem artística/fotográfica sem texto: responda APENAS com modo_imagem.`
+            }],
+            { model: this.config.model, maxTokens: 30, temperature: 0.1 }
+        );
+
+        return intentResult.content.toLowerCase().includes('banner') ? 'banner' : 'imagem';
+    }
+
+    private async runBannerMode(input: SpecialistInput, llmRouter: LLMRouter, session: DesignerSession): Promise<SpecialistOutput> {
+        const originalText = input.text.trim();
+        const previousCopy = session.lastBannerCopy ? JSON.stringify(session.lastBannerCopy, null, 2) : 'null';
         const copyPrompt = `
-Gere a estrutura JSON para um banner/slide com a exata mensagem fornecida pelo usuário: "${input.text}".
-Você DEVE retornar **estritamente em formato JSON valido**, sem crases no começo ou fim, usando a seguinte estrutura exata:
+Gere a estrutura JSON para um banner de Ana Moser.
+
+Pedido atual do usuário:
+"${originalText}"
+
+Última peça já gerada nesta sessão:
+${previousCopy}
+
+Regras:
+- Se o pedido atual for ajuste, preserve a peça anterior e altere apenas o que foi pedido.
+- O caso principal é banner com texto, moldura, destaque e composição previsível.
+- O texto principal deve ficar em "body".
+- Se não houver título explícito, use null.
+- Se não houver número explícito, use null.
+- Se não houver destaque em box, use null.
+- Se não houver cor pedida, use bgColor "#0B192C" e accentColor "#F6C90E".
+- Se não houver cor de fonte pedida, use null.
+- frameStyle deve ser "accent", "clean" ou "double". Se o usuário falar em moldura ou borda forte, prefira "double".
+
+Responda APENAS com JSON válido nesta estrutura:
 {
-  "title": "TÍTULO CURTO EM MAIÚSCULO (OPCIONAL. Retorne SOMENTE se o usuário pedir explicitamente um título. Se não pedir título, retorne null!)",
-  "number": "NÚMERO OU ÍCONE CURTO (OPCIONAL. Retorne SOMENTE se o usuário pedir explicitamente um número no topo do slide. Ex: '1', '2'. Se não pedir, retorne null!)",
-  "body": "USE EXATAMENTE O TEXTO FORNECIDO PELO USUÁRIO. Não invente, não expanda e não adicione informações extras. Se o texto for longo, mas for o que o usuário enviou, mantenha. Use '\\n' se precisar quebrar a linha do texto original de forma semântica.",
-  "highlight": "FRASE DE DESTAQUE (OPCIONAL. Retorne SOMENTE se o usuário pediu explicitamente para colocar um texto num box, num bloco amarelo, ou destacá-lo separado. Se não houver pedido explícito de box, retorne null obrigatoriamente!)",
-  "isQuote": true ou false (se o usuário estiver fornecendo claramente uma citação de alguém),
-  "bgColor": "CÓDIGO HEXADECIMAL da cor de fundo. Se o usuário NÃO pedir uma cor específica, use OBRIGATORIAMENTE o padrão '#0B192C' (Azul Escuro). Se pedir, traduza para um HEX bonito e elegante.",
-  "accentColor": "CÓDIGO HEXADECIMAL da cor de destaque (usada no bloco e nas aspas). Se o usuário NÃO pedir cor de destaque, use OBRIGATORIAMENTE o padrão '#F6C90E' (Amarelo). Se pedir, traduza para HEX.",
-  "fontColor": "CÓDIGO HEXADECIMAL da cor da fonte. (OPCIONAL. Retorne SOMENTE se o usuário pedir explicitamente para a fonte/letra ter uma cor específica. Se não pedir explícito, retorne null!)"
-}
-Mantenha fidelidade total ao pedido de texto do usuário. Se as cores não forem mencionadas, use os padrões.
-        `;
+  "title": string | null,
+  "number": string | null,
+  "body": string,
+  "highlight": string | null,
+  "isQuote": boolean,
+  "bgColor": string,
+  "accentColor": string,
+  "fontColor": string | null,
+  "frameStyle": "accent" | "clean" | "double"
+}`;
 
-        let copyData;
-        const copyResult = await llmRouter.complete([{ role: 'user', content: copyPrompt }], { model: this.config.model, temperature: 0.7 });
+        const copyResult = await llmRouter.complete(
+            [{ role: 'user', content: copyPrompt }],
+            { model: this.config.model, temperature: 0.4, maxTokens: 1200 }
+        );
 
+        let copyData: BannerCopy;
         try {
             let cleanJson = copyResult.content.trim();
-            if (cleanJson.startsWith('\`\`\`json')) cleanJson = cleanJson.replace('\`\`\`json', '');
-            if (cleanJson.startsWith('\`\`\`')) cleanJson = cleanJson.replace('\`\`\`', '');
-            if (cleanJson.endsWith('\`\`\`')) cleanJson = cleanJson.slice(0, -3);
-            copyData = JSON.parse(cleanJson.trim());
-        } catch (err) {
-            console.error('[Designer] Falha ao fazer parse do JSON do Banner:', copyResult.content);
-            return { text: `Desculpe, tentei desenhar o banner mas meu redator engasgou. Tente reabrir o pedido de forma levemente diferente!` };
+            cleanJson = cleanJson.replace(/^```json/i, '').replace(/^```/, '').replace(/```$/, '').trim();
+            copyData = JSON.parse(cleanJson) as BannerCopy;
+        } catch {
+            console.error('[Designer] Falha ao fazer parse do JSON do banner:', copyResult.content);
+            return { text: 'Não consegui estruturar o banner com segurança. Reenvie o texto principal da peça de forma mais direta.' };
         }
 
-        if (input.onProgress) await input.onProgress('🧑‍💻 Compilando layout HTML...');
-
-        // Cálculo de Fonte Dinâmica para o Corpo (Menos texto = Fonte maior)
-        const textLen = copyData.body.length;
+        const bannerText = typeof copyData.body === 'string' ? copyData.body : originalText;
+        const textLen = bannerText.length;
         let dynamicFontSize = '42px';
-        if (textLen <= 60) dynamicFontSize = '75px';
+        if (textLen <= 60) dynamicFontSize = '76px';
         else if (textLen <= 120) dynamicFontSize = '60px';
         else if (textLen <= 180) dynamicFontSize = '48px';
         else dynamicFontSize = '38px';
 
-        // Cálculo de Fonte Dinâmica para o Título
-        let titleFontSize = '52px'; // Default
+        let titleFontSize = '52px';
         if (copyData.title) {
             const titleLen = copyData.title.length;
-            if (titleLen <= 10) titleFontSize = '90px'; // Very short titles can be huge
-            else if (titleLen <= 20) titleFontSize = '70px';
-            else titleFontSize = '52px';
+            if (titleLen <= 10) titleFontSize = '88px';
+            else if (titleLen <= 20) titleFontSize = '68px';
         }
-
-        // Cálculo de Contraste para a Cor da Fonte (W3C YIQ)
-        const getContrastYIQ = (hexcolor: string) => {
-            hexcolor = hexcolor.replace("#", "");
-            if (hexcolor.length === 3) hexcolor = hexcolor.split('').map(c => c + c).join('');
-            const r = parseInt(hexcolor.slice(0, 2), 16);
-            const g = parseInt(hexcolor.slice(2, 4), 16);
-            const b = parseInt(hexcolor.slice(4, 6), 16);
-            const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
-            return (yiq >= 128) ? '#0B192C' : '#FFFFFF'; // Dark text on light bgs, light on dark
-        };
 
         const bgColor = copyData.bgColor || '#0B192C';
         const accentColor = copyData.accentColor || '#F6C90E';
-        const fontColor = copyData.fontColor || getContrastYIQ(bgColor);
+        const fontColor = copyData.fontColor || this.getContrastYIQ(bgColor);
+        const frameStyle = copyData.frameStyle || 'accent';
+        const frameBorder = frameStyle === 'double'
+            ? `16px double ${accentColor}`
+            : frameStyle === 'clean'
+                ? '2px solid rgba(255,255,255,0.24)'
+                : `10px solid ${accentColor}`;
+        const frameShadow = frameStyle === 'clean'
+            ? '0 12px 40px rgba(0,0,0,0.32)'
+            : '0 20px 50px rgba(0,0,0,0.5)';
+
+        if (input.onProgress) await input.onProgress('🧑‍💻 Compilando banner com tipografia, destaque e moldura...');
 
         try {
-            if (input.onProgress) await input.onProgress('✨ Renderizando tipografia do Banner...');
             const imageBuffer = await nodeHtmlToImage({
                 html: bannerTemplate,
                 content: {
                     title: copyData.title,
                     number: copyData.number,
-                    body: copyData.body,
+                    body: bannerText,
                     highlight: copyData.highlight,
                     isQuote: copyData.isQuote,
                     fontSize: dynamicFontSize,
-                    titleFontSize: titleFontSize,
-                    bgColor: bgColor,
-                    accentColor: accentColor,
-                    fontColor: fontColor
+                    titleFontSize,
+                    bgColor,
+                    accentColor,
+                    fontColor,
+                    frameStyle,
+                    frameBorder,
+                    frameShadow,
                 },
                 type: 'png',
                 puppeteerArgs: {
@@ -213,74 +282,85 @@ Mantenha fidelidade total ao pedido de texto do usuário. Se as cores não forem
                 }
             }) as Buffer;
 
+            session.lastBannerCopy = copyData;
+            session.selectedMode = 'banner';
+
             let driveLink = '';
+            let driveWarning = '';
             if (input.driveService) {
                 try {
                     if (input.onProgress) await input.onProgress('☁️ Salvando banner final no Drive...');
-                    const folders = input.driveService.getFolders();
-                    if (folders) {
-                        const fileName = `banner_${Date.now()}.png`;
-                        const driveFile = await input.driveService.uploadFile(fileName, imageBuffer, 'image/png', folders.outputsImagens);
-                        driveLink = `\n\n[🖼️ Salvo no Drive: ${driveFile.webViewLink} ]`;
-                    }
+                    const fileName = `banner_${Date.now()}.png`;
+                    const driveFile = await input.driveService.saveDesignerAsset(fileName, imageBuffer, 'image/png');
+                    driveLink = `\n\n[🖼️ Salvo no Drive: ${driveFile.webViewLink} ]`;
                 } catch (err) {
-                    console.error('[Designer] Erro ao salvar no Drive:', err);
+                    console.error('[Designer] Erro ao salvar banner no Drive:', err);
+                    driveWarning = '\n\n[⚠️ Banner gerado, mas o upload no Drive falhou.]';
                 }
             }
 
             return {
-                text: `🎨 **Banner Renderizado com Sucesso!**\n\nTítulo: ${copyData.title}\n_Gerado via Motor Visual (HTML/CSS)_${driveLink}`,
+                text: `🎨 **Banner pronto!**\n\nPeça montada com texto, moldura e destaque.${driveLink}${driveWarning}\n\nSe quiser, posso ajustar cor, moldura, hierarquia ou texto na mesma sessão.`,
                 mediaBuffer: imageBuffer,
-                metadata: { type: 'banner_html', copy: copyData },
+                metadata: {
+                    type: 'banner_html',
+                    mimeType: 'image/png',
+                    fileName: `banner-${Date.now()}.png`,
+                    copy: copyData,
+                },
             };
-
         } catch (err) {
-            console.error('[Designer] Erro no render-html:', err);
-            return { text: `Algo deu errado na máquina de renderizar o banner: ${err}` };
+            console.error('[Designer] Erro no render do banner:', err);
+            return { text: `Algo falhou ao renderizar o banner: ${String(err)}` };
         }
     }
 
-    private async runImageMode(input: SpecialistInput, llmRouter: LLMRouter): Promise<SpecialistOutput> {
-        // 1. Usa o LLM para criar um prompt visual detalhado em inglês
+    private async runImageMode(input: SpecialistInput, llmRouter: LLMRouter, session: DesignerSession): Promise<SpecialistOutput> {
+        const contextNote = session.lastImageUrl
+            ? `A última imagem criada nesta sessão foi: ${session.lastImageUrl}. Se o pedido atual for continuação, refine a ideia visual mantendo coerência.`
+            : '';
+
         const promptResult = await llmRouter.complete(
-            [{ role: 'user', content: `Crie um prompt detalhado em INGLÊS para gerar esta imagem (SEM TEXTOS ESCRITOS): "${input.text}". Responda APENAS com o prompt, sem explicações.` }],
+            [{
+                role: 'user',
+                content: `Crie um prompt detalhado em INGLÊS para gerar esta imagem, sem texto escrito dentro dela: "${input.text}". ${contextNote}`.trim()
+            }],
             {
                 model: this.config.model,
-                systemPrompt: 'Você é um especialista em prompts para geração de imagens fotográficas/abstratas. Crie prompts descritivos, focando em iluminação, mood e paleta. IMPORTANTE: IA geradora de imagem não sabe escrever. Não inclua textos soltos no prompt.',
+                systemPrompt: 'Você escreve prompts visuais para geração de imagem. Foque em iluminação, composição, atmosfera e acabamento. Nunca inclua texto legível na imagem.',
                 maxTokens: 500,
-                temperature: 0.7,
+                temperature: 0.6,
             }
         );
 
         const imagePrompt = promptResult.content.trim();
         console.log(`[Designer] 🎨 Prompt gerado (Leonardo): ${imagePrompt.slice(0, 80)}...`);
 
-        // 2. Gera a imagem via Leonardo.ai
         try {
-            if (input.onProgress) await input.onProgress('🖌️ Desenhando pixels com Leonardo.ai...');
+            if (input.onProgress) await input.onProgress('🖌️ Gerando imagem via Leonardo.ai...');
             const imageUrl = await this.generateImage(imagePrompt);
+            session.lastImageUrl = imageUrl;
+            session.selectedMode = 'imagem';
 
             let driveLink = '';
+            let driveWarning = '';
             if (input.driveService) {
                 try {
-                    if (input.onProgress) await input.onProgress('☁️ Salvando cópia no Drive...');
+                    if (input.onProgress) await input.onProgress('☁️ Salvando imagem no Drive...');
                     const imgRes = await fetch(imageUrl);
                     const arrayBuffer = await imgRes.arrayBuffer();
                     const buffer = Buffer.from(arrayBuffer);
-
-                    const folders = input.driveService.getFolders();
-                    if (folders) {
-                        const fileName = `imagem_${Date.now()}.png`;
-                        const driveFile = await input.driveService.uploadFile(fileName, buffer, 'image/png', folders.outputsImagens);
-                        driveLink = `\n\n[🖼️ Salvo no Drive: ${driveFile.webViewLink} ]`;
-                    }
+                    const fileName = `imagem_${Date.now()}.png`;
+                    const driveFile = await input.driveService.saveDesignerAsset(fileName, buffer, 'image/png');
+                    driveLink = `\n\n[🖼️ Salvo no Drive: ${driveFile.webViewLink} ]`;
                 } catch (err) {
-                    console.error('[Designer] Erro ao salvar no Drive:', err);
+                    console.error('[Designer] Erro ao salvar imagem no Drive:', err);
+                    driveWarning = '\n\n[⚠️ Imagem criada, mas o upload no Drive falhou.]';
                 }
             }
 
             return {
-                text: `🎨 Ilustração criada!\n\n**Prompt usado:** ${imagePrompt}\n\n_Gerada via Leonardo.ai_${driveLink}`,
+                text: `🎨 Ilustração criada!${driveLink}${driveWarning}\n\nSe quiser continuar a mesma peça, me diga o ajuste visual.`,
                 mediaUrl: imageUrl,
                 metadata: { prompt: imagePrompt, provider: 'leonardo.ai' },
             };
@@ -288,13 +368,22 @@ Mantenha fidelidade total ao pedido de texto do usuário. Se as cores não forem
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`[Designer] ❌ Erro Leonardo.ai: ${msg}`);
             return {
-                text: `Não consegui gerar a imagem agorinha. Erro do Provedor Visual: ${msg}\n\n**Prompt que seria usado:** ${imagePrompt}`,
+                text: `Não consegui gerar a imagem agora. Erro do provedor visual: ${msg}\n\nPrompt usado: ${imagePrompt}`,
             };
         }
     }
 
+    private getContrastYIQ(hexcolor: string): string {
+        let normalized = hexcolor.replace('#', '');
+        if (normalized.length === 3) normalized = normalized.split('').map(c => c + c).join('');
+        const r = parseInt(normalized.slice(0, 2), 16);
+        const g = parseInt(normalized.slice(2, 4), 16);
+        const b = parseInt(normalized.slice(4, 6), 16);
+        const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+        return yiq >= 128 ? '#0B192C' : '#FFFFFF';
+    }
+
     private async generateImage(prompt: string): Promise<string> {
-        // Inicia geração
         const genRes = await fetch(`${LEONARDO_API}/generations`, {
             method: 'POST',
             headers: {
@@ -303,7 +392,7 @@ Mantenha fidelidade total ao pedido de texto do usuário. Se as cores não forem
             },
             body: JSON.stringify({
                 prompt,
-                modelId: '6b645e3a-d64f-4341-a6d8-7a3690fbf042', // Leonardo Phoenix
+                modelId: '6b645e3a-d64f-4341-a6d8-7a3690fbf042',
                 width: 768,
                 height: 1024,
                 num_images: 1,
@@ -319,7 +408,6 @@ Mantenha fidelidade total ao pedido de texto do usuário. Se as cores não forem
         };
         const generationId = genData.sdGenerationJob.generationId;
 
-        // Aguarda resultado (polling)
         for (let i = 0; i < 30; i++) {
             await new Promise(r => setTimeout(r, 3000));
 

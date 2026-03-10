@@ -1,8 +1,8 @@
 /**
  * GravityClaw — Google Drive Service
  *
- * Integração com Google Drive via Service Account.
- * Permite listar, upload e download de arquivos nas pastas do Doug.
+ * Integração com Google Drive via OAuth do usuário.
+ * Texto é salvo como Google Doc; binários são enviados pelos specialists.
  */
 
 import { google, type drive_v3 } from 'googleapis';
@@ -153,6 +153,18 @@ export class DriveService {
     }
 
     /**
+     * Doug central só deve salvar texto explicitamente solicitado.
+     * Uploads binários são responsabilidade dos specialists.
+     */
+    getUploadOwnership() {
+        return {
+            text: 'Doug',
+            image: 'Designer',
+            video: 'Video',
+        } as const;
+    }
+
+    /**
      * Faz upload de um arquivo binário para uma pasta do Drive.
      * Usa resumable upload para evitar problemas de quota.
      */
@@ -162,26 +174,15 @@ export class DriveService {
         mimeType: string,
         folderId: string
     ): Promise<{ id: string; webViewLink: string }> {
-        const media = {
-            mimeType,
-            body: Readable.from([new Uint8Array(content)]),
-        };
-
-        const res = await this.drive.files.create({
-            requestBody: {
-                name: fileName,
-                parents: [folderId],
+        return this.createBinaryUpload(
+            {
+                fileName,
+                mimeType,
+                folderId,
+                body: Readable.from([new Uint8Array(content)]),
             },
-            media,
-            fields: 'id,webViewLink',
-            supportsAllDrives: true,
-        });
-
-        console.log(`[Drive] 📤 Upload: ${fileName} → ${res.data.id}`);
-        return {
-            id: res.data.id!,
-            webViewLink: res.data.webViewLink ?? `https://drive.google.com/file/d/${res.data.id}/view`,
-        };
+            'memory'
+        );
     }
 
     /**
@@ -193,26 +194,15 @@ export class DriveService {
         mimeType: string,
         folderId: string
     ): Promise<{ id: string; webViewLink: string }> {
-        const media = {
-            mimeType,
-            body: createReadStream(filePath),
-        };
-
-        const res = await this.drive.files.create({
-            requestBody: {
-                name: fileName,
-                parents: [folderId],
+        return this.createBinaryUpload(
+            {
+                fileName,
+                mimeType,
+                folderId,
+                body: createReadStream(filePath),
             },
-            media,
-            fields: 'id,webViewLink',
-            supportsAllDrives: true,
-        });
-
-        console.log(`[Drive] 📤 Upload (Stream): ${fileName} → ${res.data.id}`);
-        return {
-            id: res.data.id!,
-            webViewLink: res.data.webViewLink ?? `https://drive.google.com/file/d/${res.data.id}/view`,
-        };
+            'stream'
+        );
     }
 
     /**
@@ -245,6 +235,32 @@ export class DriveService {
         };
     }
 
+    async saveDesignerAsset(
+        fileName: string,
+        content: Buffer,
+        mimeType: string
+    ): Promise<{ id: string; webViewLink: string }> {
+        const folders = this.requireFolders();
+        return this.uploadFile(fileName, content, mimeType, folders.outputsImagens);
+    }
+
+    async saveVideoAsset(
+        fileName: string,
+        filePath: string,
+        mimeType: string
+    ): Promise<{ id: string; webViewLink: string }> {
+        const folders = this.requireFolders();
+        return this.uploadFileStream(fileName, filePath, mimeType, folders.outputsVideos);
+    }
+
+    async saveAgentText(
+        fileName: string,
+        text: string
+    ): Promise<{ id: string; webViewLink: string }> {
+        const folders = this.requireFolders();
+        return this.saveText(fileName, text, folders.outputsPosts);
+    }
+
     /**
      * Lista arquivos em uma pasta.
      */
@@ -272,5 +288,48 @@ export class DriveService {
             { responseType: 'arraybuffer' }
         );
         return Buffer.from(res.data as ArrayBuffer);
+    }
+
+    private requireFolders(): DriveFolderMap {
+        if (!this.folders) {
+            throw new Error('[Drive] Pastas ainda não foram inicializadas.');
+        }
+        return this.folders;
+    }
+
+    private async createBinaryUpload(
+        input: {
+            fileName: string;
+            mimeType: string;
+            folderId: string;
+            body: NodeJS.ReadableStream;
+        },
+        mode: 'memory' | 'stream'
+    ): Promise<{ id: string; webViewLink: string }> {
+        try {
+            const res = await this.drive.files.create({
+                requestBody: {
+                    name: input.fileName,
+                    mimeType: input.mimeType,
+                    parents: [input.folderId],
+                },
+                media: {
+                    mimeType: input.mimeType,
+                    body: input.body,
+                },
+                fields: 'id,webViewLink,webContentLink',
+                supportsAllDrives: true,
+                uploadType: 'resumable',
+            });
+
+            console.log(`[Drive] 📤 Upload (${mode}): ${input.fileName} → ${res.data.id}`);
+            return {
+                id: res.data.id!,
+                webViewLink: res.data.webViewLink ?? res.data.webContentLink ?? `https://drive.google.com/file/d/${res.data.id}/view`,
+            };
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            throw new Error(`[Drive] Falha no upload binário (${mode}) de "${input.fileName}": ${msg}`);
+        }
     }
 }

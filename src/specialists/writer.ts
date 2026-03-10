@@ -68,13 +68,13 @@ Ana Moser é ex-jogadora de vôlei, presidente do IEE (Instituto Esporte e Educa
                 const folders = input.driveService.getFolders();
                 if (folders) {
                     const isCaption = input.text.toLowerCase().includes('legenda');
-                    const targetFolder = isCaption ? folders.outputsLegendas : folders.outputsPosts;
-
                     const titleMatch = response.content.split('\n')[0]?.replace(/[#*]/g, '').trim();
                     const title = titleMatch ? `${titleMatch.substring(0, 30)}.txt` : `post_${Date.now()}.txt`;
 
                     if (input.onProgress) await input.onProgress('☁️ Salvando cópia no Drive...');
-                    const driveDoc = await input.driveService.saveText(title, response.content, targetFolder);
+                    const driveDoc = isCaption
+                        ? await input.driveService.saveText(title, response.content, folders.outputsLegendas)
+                        : await input.driveService.saveAgentText(title, response.content);
 
                     return {
                         text: `${response.content}\n\n[📄 Salvo no Drive: ${driveDoc.webViewLink} ]`

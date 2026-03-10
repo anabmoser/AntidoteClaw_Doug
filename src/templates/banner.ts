@@ -9,6 +9,8 @@ export const bannerTemplate = `
             --bg-color: {{bgColor}};
             --accent-color: {{accentColor}};
             --font-color: {{fontColor}};
+            --frame-border: {{frameBorder}};
+            --frame-shadow: {{frameShadow}};
         }
 
         body {
@@ -39,8 +41,8 @@ export const bannerTemplate = `
             border-radius: 40px;
             padding: 60px 80px;
             box-sizing: border-box;
-            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
-            border-left: 10px solid var(--accent-color);
+            box-shadow: var(--frame-shadow);
+            border: var(--frame-border);
             overflow: hidden;
         }
 
