@@ -571,14 +571,17 @@ Inclua entre 1 e 5 cortes sugeridos.`,
     }
 
     private async uploadToAssemblyAIFromPath(filePath: string): Promise<string> {
-        const res = await fetch('https://api.assemblyai.com/v2/upload', {
+        const requestInit = {
             method: 'POST',
             headers: {
                 'Authorization': this.assemblyaiKey,
                 'Content-Type': 'application/octet-stream',
             },
+            duplex: 'half',
             body: createReadStream(filePath) as any,
-        });
+        } as RequestInit & { duplex: 'half' };
+
+        const res = await fetch('https://api.assemblyai.com/v2/upload', requestInit);
         if (!res.ok) {
             const errText = await res.text();
             throw new Error(`AssemblyAI upload: ${res.status} — ${errText}`);
