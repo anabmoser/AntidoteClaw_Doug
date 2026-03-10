@@ -174,6 +174,13 @@ export class Agent {
         sendFile?: (filePath: string, caption: string) => Promise<void>
     ): Promise<OutgoingMessage> {
         const startTime = Date.now();
+        const isBinaryDriveRequest = (text: string): boolean => {
+            const lower = text.toLowerCase();
+            const mentionsDrive = lower.includes('drive');
+            const asksToSave = lower.includes('salv') || lower.includes('guard') || lower.includes('sub') || lower.includes('envia');
+            const mentionsBinary = lower.includes('vídeo') || lower.includes('video') || lower.includes('imagem') || lower.includes('banner') || lower.includes('foto') || lower.includes('.mp4') || lower.includes('.png') || lower.includes('.jpg');
+            return mentionsDrive && asksToSave && mentionsBinary;
+        };
 
         try {
             // 1. Verificação de segurança
@@ -334,7 +341,9 @@ export class Agent {
                         if (tc.function.name === 'gravityclaw_save_drive' && this.driveService) {
                             const { title, content } = JSON.parse(tc.function.arguments);
                             let textResult = '';
-                            if (this.driveService.getFolders()) {
+                            if (isBinaryDriveRequest(cleanText)) {
+                                textResult = '[ERRO] Esta ferramenta salva apenas documentos de texto. Não confirme upload de vídeo/imagem/banner sem um link real gerado pelo specialist responsável.';
+                            } else if (this.driveService.getFolders()) {
                                 const res = await this.driveService.saveAgentText(title, content);
                                 textResult = `[SISTEMA] Sucesso! Documento "${title}" salvo no seu Google Drive (Pasta OUTPUTS/posts). Link: ${res.webViewLink}. Comunique esse link ao usuário!`;
                             } else {

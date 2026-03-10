@@ -35,6 +35,17 @@ interface CutDefinition {
 export class VideoSpecialist extends Specialist {
     private assemblyaiKey: string;
     private drive: DriveService | null;
+    private completedVideos = new Map<string, {
+        clips: {
+            name: string;
+            description: string;
+            path?: string;
+            srtPath?: string;
+            driveLink?: string;
+            uploadError?: string;
+        }[];
+        createdAt: number;
+    }>();
 
     constructor(assemblyaiKey: string, drive?: DriveService | null) {
         super({
@@ -88,12 +99,31 @@ Priorize trechos sobre: esporte, educação, liderança, empoderamento.`,
         if (pending?.inputPath) {
             try { unlinkSync(pending.inputPath); } catch { /* ignore */ }
         }
+        const completed = this.completedVideos.get(senderId);
+        if (completed) {
+            for (const clip of completed.clips) {
+                if (clip.path) {
+                    try { unlinkSync(clip.path); } catch { /* ignore */ }
+                }
+                if (clip.srtPath) {
+                    try { unlinkSync(clip.srtPath); } catch { /* ignore */ }
+                }
+            }
+        }
         this.pendingVideos.delete(senderId);
+        this.completedVideos.delete(senderId);
     }
 
     async run(input: SpecialistInput, llmRouter: LLMRouter): Promise<SpecialistOutput> {
         const progress = input.onProgress;
         const sourceId = input.senderId;
+
+        if (!input.mediaUrl && input.text) {
+            const completedFollowUp = await this.handleCompletedVideoFollowUp(sourceId, input);
+            if (completedFollowUp) {
+                return completedFollowUp;
+            }
+        }
 
         // === FASE 0: Verifica se o usuário enviou feedback de um vídeo pendente ===
         if (!input.mediaUrl && input.text && this.pendingVideos.has(sourceId)) {
@@ -291,6 +321,14 @@ Inclua entre 1 e 5 cortes sugeridos.`,
         const progress = input.onProgress;
         const tempDir = join(process.cwd(), '.tmp', 'video');
         let ffmpegResults = '';
+        const completedClips: {
+            name: string;
+            description: string;
+            path?: string;
+            srtPath?: string;
+            driveLink?: string;
+            uploadError?: string;
+        }[] = [];
 
         if (cuts.length > 0) {
             if (progress) await progress(`✂️ Renderizando ${cuts.length} corte(s) com legendas embutidas...\n(Isso pode levar alguns minutos)`);
@@ -330,6 +368,7 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                 for (const clip of clipPaths) {
                     let driveLink = '';
                     let driveWarning = '';
+                    let uploadError = '';
                     const dService = input.driveService ?? this.drive;
 
                     if (dService) {
@@ -338,10 +377,20 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                             driveLink = `\n\n[☁️ Salvo no Drive: ${uploadRes.webViewLink} ]`;
                             console.log(`[Video] ☁️ Upload Drive: ${clip.name}.mp4`);
                         } catch (err) {
+                            uploadError = err instanceof Error ? err.message : String(err);
                             console.error(`[Video] ⚠️ Erro no Drive para ${clip.name}:`, err);
                             driveWarning = `\n\n[⚠️ ${clip.name} gerado, mas o upload no Drive falhou.]`;
                         }
                     }
+
+                    completedClips.push({
+                        name: clip.name,
+                        description: clip.description,
+                        path: driveLink ? undefined : clip.path,
+                        srtPath: driveLink ? undefined : clip.srtPath,
+                        driveLink: driveLink ? driveLink.replace(/\n\n|\[|\]/g, '').replace('☁️ Salvo no Drive: ', '').trim() : undefined,
+                        uploadError: uploadError || undefined,
+                    });
 
                     try {
                         let caption = `✂️ ${clip.name}: ${clip.description}`;
@@ -359,11 +408,22 @@ Inclua entre 1 e 5 cortes sugeridos.`,
             }
 
             // Cleanup temp files
-            for (const clip of clipPaths) {
-                try { unlinkSync(clip.path); } catch { /* ignore */ }
-                if (clip.srtPath) { try { unlinkSync(clip.srtPath); } catch { /* ignore */ } }
+            for (let i = 0; i < clipPaths.length; i++) {
+                const clip = clipPaths[i]!;
+                const completed = completedClips[i];
+                if (!completed?.path) {
+                    try { unlinkSync(clip.path); } catch { /* ignore */ }
+                }
+                if (clip.srtPath && !completed?.srtPath) {
+                    try { unlinkSync(clip.srtPath); } catch { /* ignore */ }
+                }
             }
         }
+
+        this.completedVideos.set(input.senderId, {
+            clips: completedClips,
+            createdAt: Date.now(),
+        });
 
         // Cleanup input
         try { unlinkSync(inputPath); } catch { /* ignore */ }
@@ -382,6 +442,59 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                 console.error(`[Video] ⚠️ Erro relatório Drive`);
             }
         }
+    }
+
+    private async handleCompletedVideoFollowUp(sourceId: string, input: SpecialistInput): Promise<SpecialistOutput | null> {
+        const text = input.text.toLowerCase().trim();
+        const completed = this.completedVideos.get(sourceId);
+        if (!completed) return null;
+
+        const wantsDrive = text.includes('drive') && (
+            text.includes('salv') ||
+            text.includes('guard') ||
+            text.includes('sub') ||
+            text.includes('manda') ||
+            text.includes('envia') ||
+            text.includes('link')
+        );
+
+        if (!wantsDrive) return null;
+
+        const dService = input.driveService ?? this.drive;
+        for (const clip of completed.clips) {
+            if (clip.driveLink || !clip.path || !dService) continue;
+            try {
+                const uploadRes = await dService.saveVideoAsset(`${clip.name}-${Date.now()}.mp4`, clip.path, 'video/mp4');
+                clip.driveLink = uploadRes.webViewLink;
+                clip.uploadError = undefined;
+                try { unlinkSync(clip.path); } catch { /* ignore */ }
+                clip.path = undefined;
+                if (clip.srtPath) {
+                    try { unlinkSync(clip.srtPath); } catch { /* ignore */ }
+                    clip.srtPath = undefined;
+                }
+            } catch (err) {
+                clip.uploadError = err instanceof Error ? err.message : String(err);
+            }
+        }
+
+        const links = completed.clips.filter(clip => clip.driveLink);
+        if (links.length > 0) {
+            return {
+                text: `✅ Upload confirmado no Google Drive.\n\n${links.map(clip => `- ${clip.name}: ${clip.driveLink}`).join('\n')}`
+            };
+        }
+
+        const firstError = completed.clips.find(clip => clip.uploadError)?.uploadError;
+        if (!dService) {
+            return {
+                text: '⚠️ O Drive não está configurado nesta execução do Video Agent. Não vou confirmar upload sem link real.'
+            };
+        }
+
+        return {
+            text: `⚠️ Eu não consegui confirmar o upload do vídeo no Drive. Não vou afirmar que salvou sem link real.${firstError ? `\n\nErro: ${firstError}` : ''}`
+        };
     }
 
     // ─── Helpers ───────────────────────────────────────────
