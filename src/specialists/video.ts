@@ -32,18 +32,20 @@ interface CutDefinition {
     subtitles?: { start: string; end: string; text: string }[];
 }
 
+interface CompletedVideoClip {
+    name: string;
+    description: string;
+    path?: string;
+    srtPath?: string;
+    driveLink?: string;
+    uploadError?: string;
+}
+
 export class VideoSpecialist extends Specialist {
     private assemblyaiKey: string;
     private drive: DriveService | null;
     private completedVideos = new Map<string, {
-        clips: {
-            name: string;
-            description: string;
-            path?: string;
-            srtPath?: string;
-            driveLink?: string;
-            uploadError?: string;
-        }[];
+        clips: CompletedVideoClip[];
         createdAt: number;
     }>();
 
@@ -163,9 +165,18 @@ Formato:
                 const cuts = this.parseCuts(analysisText);
 
                 if (cuts.length > 0) {
-                    await this.executeCutsAndSend(pending.inputPath, cuts, pending.transcript, analysisText, input, llmRouter);
+                    const execution = await this.executeCutsAndSend(pending.inputPath, cuts, pending.transcript, analysisText, input, llmRouter);
                     this.pendingVideos.delete(sourceId); // Limpa o estado após sucesso
-                    return { text: `✅ Vídeo finalizado com base no seu feedback!`, metadata: { interactive: true } };
+                    if (execution.renderedClips === 0) {
+                        return {
+                            text: `❌ O vídeo não foi renderizado com sucesso.${execution.firstError ? `\n\nErro: ${execution.firstError}` : ''}`,
+                            metadata: { interactive: true, renderedClips: 0 }
+                        };
+                    }
+                    return {
+                        text: `✅ Vídeo finalizado com base no seu feedback!${execution.driveLinks.length > 0 ? `\n\n☁️ Link(s) do Drive:\n${execution.driveLinks.join('\n')}` : execution.firstError ? `\n\n⚠️ O vídeo foi renderizado, mas houve falha no envio/salvamento:\n${execution.firstError}` : ''}`,
+                        metadata: { interactive: true, renderedClips: execution.renderedClips }
+                    };
                 } else {
                     return { text: `⚠️ Não consegui entender os cortes no formato esperado após o seu feedback. A resposta foi:\n\n${analysisText}` };
                 }
@@ -317,18 +328,13 @@ Inclua entre 1 e 5 cortes sugeridos.`,
         analysisText: string,
         input: SpecialistInput,
         llmRouter: LLMRouter
-    ) {
+    ): Promise<{ renderedClips: number; driveLinks: string[]; firstError?: string }> {
         const progress = input.onProgress;
         const tempDir = join(process.cwd(), '.tmp', 'video');
-        let ffmpegResults = '';
-        const completedClips: {
-            name: string;
-            description: string;
-            path?: string;
-            srtPath?: string;
-            driveLink?: string;
-            uploadError?: string;
-        }[] = [];
+        const completedClips: CompletedVideoClip[] = [];
+        const renderErrors: string[] = [];
+        const driveLinks: string[] = [];
+        const deliveryErrors: string[] = [];
 
         if (cuts.length > 0) {
             if (progress) await progress(`✂️ Renderizando ${cuts.length} corte(s) com legendas embutidas...\n(Isso pode levar alguns minutos)`);
@@ -357,6 +363,7 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                 } catch (err) {
                     const msg = err instanceof Error ? err.message : String(err);
                     console.error(`[Video] ❌ FFmpeg erro (${cut.name}): ${msg}`);
+                    renderErrors.push(`${cut.name}: ${msg}`);
                 }
             }
 
@@ -375,11 +382,13 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                         try {
                             const uploadRes = await dService.saveVideoAsset(`${clip.name}-${Date.now()}.mp4`, clip.path, 'video/mp4');
                             driveLink = `\n\n[☁️ Salvo no Drive: ${uploadRes.webViewLink} ]`;
+                            driveLinks.push(uploadRes.webViewLink);
                             console.log(`[Video] ☁️ Upload Drive: ${clip.name}.mp4`);
                         } catch (err) {
                             uploadError = err instanceof Error ? err.message : String(err);
                             console.error(`[Video] ⚠️ Erro no Drive para ${clip.name}:`, err);
                             driveWarning = `\n\n[⚠️ ${clip.name} gerado, mas o upload no Drive falhou.]`;
+                            deliveryErrors.push(`${clip.name}: ${uploadError}`);
                         }
                     }
 
@@ -399,11 +408,11 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                         await sendFile(clip.path, caption);
                         console.log(`[Video] 📤 Enviado: ${clip.name}.mp4`);
                     } catch (sendErr) {
-                        console.error(`[Video] ⚠️ Erro ao enviar ${clip.name}`);
+                        const msg = sendErr instanceof Error ? sendErr.message : String(sendErr);
+                        console.error(`[Video] ⚠️ Erro ao enviar ${clip.name}: ${msg}`);
+                        deliveryErrors.push(`${clip.name}: ${msg}`);
                     }
                 }
-
-                ffmpegResults = `\n\n---\n\n### ✅ Vídeos Renderizados\n${clipPaths.map(c => `• ${c.name}: ${c.description}`).join('\n')}\n\n_Os ${clipPaths.length} vídeo(s) prontos foram enviados acima ☝️_`;
                 if (progress) await progress(`✅ Concluído!`);
             }
 
@@ -442,6 +451,12 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                 console.error(`[Video] ⚠️ Erro relatório Drive`);
             }
         }
+
+        return {
+            renderedClips: completedClips.length,
+            driveLinks,
+            firstError: renderErrors[0] ?? deliveryErrors[0],
+        };
     }
 
     private async handleCompletedVideoFollowUp(sourceId: string, input: SpecialistInput): Promise<SpecialistOutput | null> {
@@ -459,6 +474,12 @@ Inclua entre 1 e 5 cortes sugeridos.`,
         );
 
         if (!wantsDrive) return null;
+
+        if (completed.clips.length === 0) {
+            return {
+                text: '⚠️ Eu não encontrei nenhum clipe final renderizado para subir ao Drive. O processamento anterior não gerou arquivo final utilizável.'
+            };
+        }
 
         const dService = input.driveService ?? this.drive;
         for (const clip of completed.clips) {
