@@ -346,11 +346,16 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                 try {
                     const outputPath = join(tempDir, `${cut.name}-${Date.now()}.mp4`);
 
-                    // Gera SRT se há legendas
+                    // Gera script ASS para header + legendas
                     let srtPath: string | undefined;
-                    if (cut.subtitles && cut.subtitles.length > 0) {
-                        srtPath = join(tempDir, `${cut.name}-${Date.now()}.srt`);
-                        this.generateSRT(cut.subtitles, srtPath);
+                    if (cut.subtitles?.length || cut.header) {
+                        srtPath = join(tempDir, `${cut.name}-${Date.now()}.ass`);
+                        this.generateASS(
+                            cut.subtitles ?? [],
+                            srtPath,
+                            cut.header,
+                            Math.max(1, this.parseTimeStr(cut.end) - this.parseTimeStr(cut.start))
+                        );
                     }
 
                     await this.runFFmpeg(inputPath, outputPath, cut.start, cut.end, cut.header, srtPath);
@@ -552,76 +557,10 @@ Inclua entre 1 e 5 cortes sugeridos.`,
     ): Promise<void> {
         return new Promise((resolve, reject) => {
             const filters: string[] = [];
-            const sanitizeDrawtextText = (value: string): string => {
-                return value
-                    .normalize('NFKD')
-                    .replace(/[\u0300-\u036f]/g, '')
-                    .replace(/[\\'":,;[\]%]/g, ' ')
-                    .replace(/\n/g, ' ')
-                    .replace(/\s+/g, ' ')
-                    .trim();
-            };
-
-            // Header bar no topo do vídeo
-            if (header) {
-                const safeHeader = sanitizeDrawtextText(header);
-                filters.push(
-                    `drawbox=x=0:y=0:w=iw:h=50:color=black@0.7:t=fill`,
-                    `drawtext=text='${safeHeader}':fontsize=24:fontcolor=white:x=(w-text_w)/2:y=15`
-                );
-            }
-
-            // Helper para quebrar texto em linhas de max 35 caracteres
-            const maxChars = 35;
-            const splitTextIntoLines = (text: string): string[] => {
-                const words = text.split(' ');
-                const lines: string[] = [];
-                let currentLine = '';
-                for (const word of words) {
-                    if ((currentLine + word).length > maxChars) {
-                        lines.push(currentLine.trim());
-                        currentLine = word + ' ';
-                    } else {
-                        currentLine += word + ' ';
-                    }
-                }
-                if (currentLine.trim()) lines.push(currentLine.trim());
-                return lines;
-            };
-
-            // Legendas - lê SRT e gera drawtext entries (agora suportado via ffmpeg-static)
             if (srtPath) {
-                try {
-                    const srtContent = readFileSync(srtPath, 'utf-8');
-                    const subs = this.parseSRT(srtContent);
-                    const startOffsetSec = this.parseTimeStr(start);
-
-                    for (const sub of subs) {
-                        // Sanitiza agressivamente o texto para não quebrar o parser do drawtext.
-                        const safeText = sanitizeDrawtextText(sub.text);
-                        const lines = splitTextIntoLines(safeText);
-
-                        // O FFmpeg entende o 't' do drawtext como o tempo absoluto do arquivo de origem (se -ss estiver depois do input).
-                        // Como pedimos legendas relativas ao corte, precisamos adicionar o offset inicial do corte:
-                        const tStart = sub.startSec + startOffsetSec;
-                        const tEnd = sub.endSec + startOffsetSec;
-
-                        // Desenha cada linha empilhada de baixo pra cima
-                        // A última linha fica em h-60, a penúltima em h-90, etc.
-                        lines.reverse().forEach((lineText, i) => {
-                            const yPos = `h-${60 + (i * 30)}`;
-                            const enableExpr = `between(t\\,${tStart}\\,${tEnd})`;
-                            filters.push(
-                                `drawtext=text='${lineText}':fontsize=20:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=${yPos}:enable='${enableExpr}'`
-                            );
-                        });
-                    }
-                } catch (err) {
-                    console.error(`[Video] ⚠️ Erro ao ler SRT: ${err}`);
-                }
+                const escapedSubtitlePath = srtPath.replace(/\\/g, '/').replace(/'/g, "\\'");
+                filters.push(`subtitles='${escapedSubtitlePath}'`);
             }
-
-
 
             const args = [
                 '-i', inputPath,
@@ -662,47 +601,59 @@ Inclua entre 1 e 5 cortes sugeridos.`,
         });
     }
 
-    /**
-     * Parse SRT content to extract subtitle entries with timestamps in seconds.
-     */
-    private parseSRT(content: string): { text: string; startSec: number; endSec: number }[] {
-        const blocks = content.trim().split(/\n\n+/);
-        const result: { text: string; startSec: number; endSec: number }[] = [];
+    private generateASS(
+        subtitles: { start: string; end: string; text: string }[],
+        outputPath: string,
+        header?: string,
+        durationSec?: number
+    ): void {
+        const sanitizeAssText = (value: string): string => {
+            return value
+                .replace(/\\/g, '')
+                .replace(/{/g, '(')
+                .replace(/}/g, ')')
+                .replace(/\r?\n/g, ' ')
+                .trim();
+        };
+        const toAssTime = (time: string): string => {
+            const total = this.parseTimeStr(time);
+            const h = Math.floor(total / 3600);
+            const m = Math.floor((total % 3600) / 60);
+            const s = Math.floor(total % 60);
+            return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.00`;
+        };
+        const toAssTimeFromSeconds = (total: number): string => {
+            const h = Math.floor(total / 3600);
+            const m = Math.floor((total % 3600) / 60);
+            const s = Math.floor(total % 60);
+            return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.00`;
+        };
 
-        for (const block of blocks) {
-            const lines = block.trim().split('\n');
-            if (lines.length < 3) continue;
+        const lines: string[] = [
+            '[Script Info]',
+            'ScriptType: v4.00+',
+            'PlayResX: 848',
+            'PlayResY: 464',
+            '',
+            '[V4+ Styles]',
+            'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+            'Style: Header,Arial,24,&H00FFFFFF,&H000000FF,&H80000000,&H80000000,-1,0,0,0,100,100,0,0,3,1,0,8,20,20,12,1',
+            'Style: Subtitle,Arial,20,&H00FFFFFF,&H000000FF,&H80000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,2,28,28,26,1',
+            '',
+            '[Events]',
+            'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+        ];
 
-            const timeLine = lines[1];
-            if (!timeLine) continue;
-            const match = timeLine.match(/(\d{2}):(\d{2}):(\d{2}),\d+\s*-->\s*(\d{2}):(\d{2}):(\d{2}),\d+/);
-            if (!match) continue;
-
-            const startSec = parseInt(match[1]!) * 3600 + parseInt(match[2]!) * 60 + parseInt(match[3]!);
-            const endSec = parseInt(match[4]!) * 3600 + parseInt(match[5]!) * 60 + parseInt(match[6]!);
-            const text = lines.slice(2).join(' ');
-
-            result.push({ text, startSec, endSec });
+        if (header) {
+            lines.push(`Dialogue: 0,0:00:00.00,${toAssTimeFromSeconds(durationSec ?? 43)},Header,,0,0,0,,${sanitizeAssText(header)}`);
         }
 
-        return result;
-    }
+        for (const sub of subtitles) {
+            lines.push(`Dialogue: 0,${toAssTime(sub.start)},${toAssTime(sub.end)},Subtitle,,0,0,0,,${sanitizeAssText(sub.text)}`);
+        }
 
-    /**
-     * Gera arquivo SRT a partir dos subtítulos definidos pelo LLM.
-     */
-    private generateSRT(subtitles: { start: string; end: string; text: string }[], outputPath: string): void {
-        const lines: string[] = [];
-        subtitles.forEach((sub, i) => {
-            const startSrt = sub.start.length <= 5 ? `00:${sub.start},000` : `${sub.start},000`;
-            const endSrt = sub.end.length <= 5 ? `00:${sub.end},000` : `${sub.end},000`;
-            lines.push(`${i + 1}`);
-            lines.push(`${startSrt} --> ${endSrt}`);
-            lines.push(sub.text);
-            lines.push('');
-        });
         writeFileSync(outputPath, lines.join('\n'), 'utf-8');
-        console.log(`[Video] 📝 SRT gerado: ${outputPath} (${subtitles.length} legendas)`);
+        console.log(`[Video] 📝 ASS gerado: ${outputPath} (${subtitles.length} legendas${header ? ' + header' : ''})`);
     }
 
     private async downloadFileToPath(url: string, outputPath: string): Promise<number> {
