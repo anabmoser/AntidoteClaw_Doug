@@ -610,8 +610,9 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                         // A última linha fica em h-60, a penúltima em h-90, etc.
                         lines.reverse().forEach((lineText, i) => {
                             const yPos = `h-${60 + (i * 30)}`;
+                            const enableExpr = `between(t\\,${tStart}\\,${tEnd})`;
                             filters.push(
-                                `drawtext=text='${lineText}':fontsize=20:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=${yPos}:enable='between(t,${tStart},${tEnd})'`
+                                `drawtext=text='${lineText}':fontsize=20:fontcolor=white:borderw=2:bordercolor=black:x=(w-text_w)/2:y=${yPos}:enable='${enableExpr}'`
                             );
                         });
                     }
