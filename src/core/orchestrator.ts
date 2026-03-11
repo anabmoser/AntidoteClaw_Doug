@@ -34,7 +34,7 @@ interface TransferIntent {
 const SPECIALIST_ALIASES: Record<string, string[]> = {
     Video: ['video', 'vídeo', 'editor', 'editor de vídeo', 'video agent'],
     Designer: ['designer', 'design', 'banner', 'imagem', 'arte'],
-    Writer: ['writer', 'redator', 'texto', 'copy'],
+    Writer: ['writer', 'redator', 'copywriter', 'copy'],
     Scout: ['scout', 'pesquisa', 'pesquisador'],
     Social: ['social', 'social media', 'redes sociais'],
 };
@@ -411,9 +411,8 @@ export class Orchestrator {
 
             const explicitContinue = new RegExp(`\\b(${aliases.map(alias => this.escapeRegExp(alias)).join('|')})\\b.*\\b(continua|continue|seguir|segue)\\b`, 'i');
             const explicitRoute = new RegExp(`\\b(${HANDOFF_VERBS.join('|')})\\b.*\\b(${aliases.map(alias => this.escapeRegExp(alias)).join('|')})\\b`, 'i');
-            const explicitTarget = /\b(pro|pra|para|com)\b/i.test(lower);
 
-            if (!explicitContinue.test(lower) && !(explicitRoute.test(lower) || explicitTarget && lower.includes(aliasMatch))) {
+            if (!explicitContinue.test(lower) && !explicitRoute.test(lower)) {
                 continue;
             }
 
