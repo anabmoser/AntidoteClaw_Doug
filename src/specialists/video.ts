@@ -30,6 +30,7 @@ interface CutDefinition {
     description: string;
     header?: string;
     subtitles?: { start: string; end: string; text: string }[];
+    speed?: number;
 }
 
 interface CompletedVideoClip {
@@ -163,9 +164,11 @@ Formato:
 
                 const analysisText = analysisResponse.content;
                 const cuts = this.parseCuts(analysisText);
+                const requestedSpeed = this.parsePlaybackSpeed(input.text);
+                const normalizedCuts = cuts.map(cut => ({ ...cut, speed: requestedSpeed ?? cut.speed }));
 
-                if (cuts.length > 0) {
-                    const execution = await this.executeCutsAndSend(pending.inputPath, cuts, pending.transcript, analysisText, input, llmRouter);
+                if (normalizedCuts.length > 0) {
+                    const execution = await this.executeCutsAndSend(pending.inputPath, normalizedCuts, pending.transcript, analysisText, input, llmRouter);
                     this.pendingVideos.delete(sourceId); // Limpa o estado após sucesso
                     if (execution.renderedClips === 0) {
                         return {
@@ -269,9 +272,10 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                 );
 
                 const analysisText = analysisResponse.content;
+                const requestedSpeed = this.parsePlaybackSpeed(userRequest);
 
                 // === FASE 4: Salva no Estado Interativo ===
-                const cuts = this.parseCuts(analysisText);
+                const cuts = this.parseCuts(analysisText).map(cut => ({ ...cut, speed: requestedSpeed ?? cut.speed }));
 
                 if (cuts.length > 0) {
                     this.pendingVideos.set(sourceId, { inputPath, transcript, initialCuts: cuts });
@@ -281,6 +285,7 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                         return cutsArr.map((c, i) => {
                             let str = `**Corte ${i + 1}: ${c.name}** (${c.start} ➝ ${c.end})\n`;
                             if (c.header) str += `- **Header:** ${c.header}\n`;
+                            if (c.speed && c.speed !== 1) str += `- **Velocidade:** ${c.speed.toFixed(2)}x\n`;
                             str += `- **Descrição:** ${c.description}\n`;
                             if (c.subtitles && c.subtitles.length > 0) {
                                 str += `- **Legendas mapeadas:**\n`;
@@ -358,7 +363,7 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                         );
                     }
 
-                    await this.runFFmpeg(inputPath, outputPath, cut.start, cut.end, cut.header, srtPath);
+                    await this.runFFmpeg(inputPath, outputPath, cut.start, cut.end, cut.header, srtPath, cut.speed ?? 1);
                     const entry: typeof clipPaths[0] = { name: cut.name, path: outputPath, description: cut.description };
                     if (cut.header) entry.header = cut.header;
                     if (cut.subtitles) entry.subtitles = cut.subtitles;
@@ -553,13 +558,21 @@ Inclua entre 1 e 5 cortes sugeridos.`,
         start: string,
         end: string,
         header?: string,
-        srtPath?: string
+        srtPath?: string,
+        playbackSpeed: number = 1
     ): Promise<void> {
         return new Promise((resolve, reject) => {
             const filters: string[] = [];
+            const audioFilters: string[] = [];
+            const safeSpeed = Number.isFinite(playbackSpeed) ? Math.min(2, Math.max(0.5, playbackSpeed)) : 1;
+
+            if (safeSpeed !== 1) {
+                filters.push(`setpts=${(1 / safeSpeed).toFixed(4)}*PTS`);
+                audioFilters.push(`atempo=${safeSpeed.toFixed(4)}`);
+            }
             if (srtPath) {
                 const escapedSubtitlePath = srtPath.replace(/\\/g, '/').replace(/'/g, "\\'");
-                filters.push(`subtitles='${escapedSubtitlePath}'`);
+                filters.push(`ass='${escapedSubtitlePath}'`);
             }
 
             const args = [
@@ -571,6 +584,9 @@ Inclua entre 1 e 5 cortes sugeridos.`,
             if (filters.length > 0) {
                 args.push('-vf', filters.join(','));
             }
+            if (audioFilters.length > 0) {
+                args.push('-af', audioFilters.join(','));
+            }
 
             args.push(
                 '-c:v', 'libx264',
@@ -578,6 +594,7 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                 '-crf', '23',
                 '-c:a', 'aac',
                 '-b:a', '128k',
+                '-movflags', '+faststart',
                 '-y',
                 outputPath
             );
@@ -634,11 +651,13 @@ Inclua entre 1 e 5 cortes sugeridos.`,
             'ScriptType: v4.00+',
             'PlayResX: 848',
             'PlayResY: 464',
+            'WrapStyle: 2',
+            'ScaledBorderAndShadow: yes',
             '',
             '[V4+ Styles]',
             'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-            'Style: Header,Arial,24,&H00FFFFFF,&H000000FF,&H80000000,&H80000000,-1,0,0,0,100,100,0,0,3,1,0,8,20,20,12,1',
-            'Style: Subtitle,Arial,20,&H00FFFFFF,&H000000FF,&H80000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,2,28,28,26,1',
+            'Style: Header,Arial,24,&H00FFFFFF,&H000000FF,&H66000000,&H66000000,-1,0,0,0,100,100,0,0,3,1,0,8,20,20,14,1',
+            'Style: Subtitle,Arial,20,&H00FFFFFF,&H000000FF,&H64000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,2,28,28,26,1',
             '',
             '[Events]',
             'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
@@ -654,6 +673,27 @@ Inclua entre 1 e 5 cortes sugeridos.`,
 
         writeFileSync(outputPath, lines.join('\n'), 'utf-8');
         console.log(`[Video] 📝 ASS gerado: ${outputPath} (${subtitles.length} legendas${header ? ' + header' : ''})`);
+    }
+
+    private parsePlaybackSpeed(text?: string): number | undefined {
+        if (!text) return undefined;
+        const lower = text.toLowerCase();
+        const explicitMatch = lower.match(/(\d+(?:[.,]\d+)?)\s*x/);
+        if (explicitMatch?.[1]) {
+            const parsed = Number(explicitMatch[1].replace(',', '.'));
+            if (Number.isFinite(parsed)) {
+                return Math.min(2, Math.max(0.5, parsed));
+            }
+        }
+        if ((lower.includes('acelera') || lower.includes('mais rapido') || lower.includes('mais rápido')) && (lower.includes('pouco') || lower.includes('leve') || lower.includes('um pouco'))) {
+            return 1.15;
+        }
+        if (lower.includes('acelera')) return 1.25;
+        if ((lower.includes('slow') || lower.includes('mais devagar') || lower.includes('desacelera') || lower.includes('lento')) && (lower.includes('pouco') || lower.includes('leve') || lower.includes('um pouco'))) {
+            return 0.9;
+        }
+        if (lower.includes('slow') || lower.includes('mais devagar') || lower.includes('desacelera') || lower.includes('lento')) return 0.8;
+        return undefined;
     }
 
     private async downloadFileToPath(url: string, outputPath: string): Promise<number> {
