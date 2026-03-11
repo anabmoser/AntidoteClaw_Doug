@@ -121,6 +121,14 @@ export class Orchestrator {
         return [...this.specialists];
     }
 
+    hasActiveSession(senderId: string): boolean {
+        return this.activeSessions.has(senderId) || Boolean(this.getLegacyActiveSpecialist(senderId));
+    }
+
+    getActiveSpecialistName(senderId: string): string | undefined {
+        return this.activeSessions.get(senderId) ?? this.getLegacyActiveSpecialist(senderId)?.config.name;
+    }
+
     findSpecialist(text: string, mediaType?: string, senderId?: string, inputMediaUrl?: string): Specialist | undefined {
         const lower = text.toLowerCase().trim();
 
@@ -166,22 +174,7 @@ export class Orchestrator {
             return undefined;
         }
 
-        const sortedSpecialists = [...this.specialists].sort((a, b) => {
-            if (a.config.name === 'Video') return -1;
-            if (b.config.name === 'Video') return 1;
-            if (a.config.name === 'Writer') return 1;
-            if (b.config.name === 'Writer') return -1;
-            return 0;
-        });
-
-        const naturalTriggerSpec = sortedSpecialists.find(s => s.matches(text));
-        if (naturalTriggerSpec && senderId) {
-            this.activeSessions.set(senderId, naturalTriggerSpec.config.name);
-            this.ensureTaskState(senderId).activeSpecialist = naturalTriggerSpec.config.name;
-            console.log(`[Orchestrator] 🔒 Sessão travada com ${naturalTriggerSpec.config.name} (Acionamento Natural)`);
-        }
-
-        return naturalTriggerSpec;
+        return undefined;
     }
 
     async tryProcess(
@@ -213,7 +206,7 @@ export class Orchestrator {
 
                 console.log(`[Orchestrator] 🔓 Sessão com ${specToExit} encerrada pelo usuário (Comando: ${lower}).`);
                 return {
-                    text: `[SISTEMA] 🔓 Tarefa finalizada. O especialista **${specToExit}** saiu da conversa.\n\nDoug (Controle Central) assumindo novamente. O que faremos agora?`
+                    text: `[SISTEMA] 🔓 Tarefa finalizada. O especialista **${specToExit}** saiu da conversa.\n\nSe quiser falar com o Doug para orquestrar, chame pelo nome. Se quiser ir direto, use o comando do próximo especialista.`
                 };
             }
         }
@@ -289,7 +282,7 @@ export class Orchestrator {
         for (const s of this.specialists) {
             lines.push(`- **${s.config.name}**: ${s.config.description} (triggers: ${s.config.triggers.join(', ')})`);
         }
-        lines.push('\nQuando o usuário pedir algo relacionado a um specialist, delegue a tarefa automaticamente.');
+        lines.push('\nAcione specialists apenas por comando explícito, por mídia compatível ou por handoff deliberado. Não use trigger natural automática.');
         return lines.join('\n');
     }
 

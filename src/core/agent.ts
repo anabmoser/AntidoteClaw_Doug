@@ -174,6 +174,7 @@ export class Agent {
         sendFile?: (filePath: string, caption: string) => Promise<void>
     ): Promise<OutgoingMessage> {
         const startTime = Date.now();
+        const explicitlyCallsDoug = (text: string): boolean => /\bdoug\b/i.test(text);
         const isBinaryDriveRequest = (text: string): boolean => {
             const lower = text.toLowerCase();
             const mentionsDrive = lower.includes('drive');
@@ -209,6 +210,13 @@ export class Agent {
                     console.error('[Agent] ❌ Falha na transcrição do áudio:', err);
                     return { text: `Desculpe, não consegui entender o áudio. Pode digitar? (${String(err)})` };
                 }
+            }
+
+            const hasFocusedSession = this.orchestrator.hasActiveSession(incoming.senderId);
+            const isExplicitCommand = incoming.text.trim().startsWith('/');
+            const isMediaDriven = incoming.mediaType === 'video' || (incoming.mediaType === 'document' && Boolean(incoming.mediaUrl?.match(/\.(mp4|mov|mkv|avi|webm)$/i)));
+            if (!hasFocusedSession && !isExplicitCommand && !isMediaDriven && !explicitlyCallsDoug(cleanText)) {
+                return { text: '' };
             }
 
             // 2. Verifica se alguma skill corresponde

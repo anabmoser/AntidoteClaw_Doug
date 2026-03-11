@@ -104,6 +104,11 @@ export class TelegramChannel implements Channel {
 
     async send(recipientId: string, message: OutgoingMessage): Promise<void> {
         const chatId = parseInt(recipientId, 10);
+        const hasText = message.text.trim().length > 0;
+
+        if (!hasText && !message.mediaUrl && !message.mediaBuffer) {
+            return;
+        }
 
         // Monta o teclado inline se houver botões
         const replyMarkup = message.buttons && message.buttons.length > 0
