@@ -120,12 +120,29 @@ Priorize trechos sobre: esporte, educação, liderança, empoderamento.`,
     async run(input: SpecialistInput, llmRouter: LLMRouter): Promise<SpecialistOutput> {
         const progress = input.onProgress;
         const sourceId = input.senderId;
+        const hasVideoLikeMedia = Boolean(
+            input.mediaUrl && (
+                input.mediaType === 'video' ||
+                (input.mediaType === 'document' && input.mediaUrl.match(/\.(mp4|mov|mkv|avi|webm)$/i))
+            )
+        );
 
         if (!input.mediaUrl && input.text) {
             const completedFollowUp = await this.handleCompletedVideoFollowUp(sourceId, input);
             if (completedFollowUp) {
                 return completedFollowUp;
             }
+        }
+
+        if (input.mediaUrl && !hasVideoLikeMedia) {
+            if (this.pendingVideos.has(sourceId) && input.text) {
+                return {
+                    text: '📎 Recebi o print como referência, mas não vou tentar transcrever isso como vídeo. Me diga em texto o ajuste que você quer no header, nas legendas, na velocidade ou nos cortes.'
+                };
+            }
+            return {
+                text: '⚠️ O Video Agent só processa arquivos de vídeo. Prints e imagens servem como referência, mas eu preciso do vídeo e da instrução em texto.'
+            };
         }
 
         // === FASE 0: Verifica se o usuário enviou feedback de um vídeo pendente ===
@@ -177,7 +194,7 @@ Formato:
                         };
                     }
                     return {
-                        text: `✅ Vídeo finalizado com base no seu feedback!${execution.driveLinks.length > 0 ? `\n\n☁️ Link(s) do Drive:\n${execution.driveLinks.join('\n')}` : execution.firstError ? `\n\n⚠️ O vídeo foi renderizado, mas houve falha no envio/salvamento:\n${execution.firstError}` : ''}`,
+                        text: `✅ Vídeo finalizado com base no seu feedback!${execution.driveLinks.length > 0 ? `\n\n☁️ Arquivos no Drive:\n${execution.driveLinks.map(item => `- ${item.name}: ${item.url}`).join('\n')}` : execution.firstError ? `\n\n⚠️ O vídeo foi renderizado, mas houve falha no envio/salvamento:\n${execution.firstError}` : ''}`,
                         metadata: { interactive: true, renderedClips: execution.renderedClips }
                     };
                 } else {
@@ -195,7 +212,7 @@ Formato:
             return super.run(input, llmRouter);
         }
 
-        if (input.mediaUrl) {
+        if (hasVideoLikeMedia) {
             console.log(`[Video] 🎬 Mídia recebida (${input.mediaType ?? 'unknown'}), iniciando pipeline de transcrição...`);
 
             try {
@@ -333,12 +350,12 @@ Inclua entre 1 e 5 cortes sugeridos.`,
         analysisText: string,
         input: SpecialistInput,
         llmRouter: LLMRouter
-    ): Promise<{ renderedClips: number; driveLinks: string[]; firstError?: string }> {
+    ): Promise<{ renderedClips: number; driveLinks: Array<{ name: string; url: string }>; firstError?: string }> {
         const progress = input.onProgress;
         const tempDir = join(process.cwd(), '.tmp', 'video');
         const completedClips: CompletedVideoClip[] = [];
         const renderErrors: string[] = [];
-        const driveLinks: string[] = [];
+        const driveLinks: Array<{ name: string; url: string }> = [];
         const deliveryErrors: string[] = [];
 
         if (cuts.length > 0) {
@@ -392,7 +409,7 @@ Inclua entre 1 e 5 cortes sugeridos.`,
                         try {
                             const uploadRes = await dService.saveVideoAsset(`${clip.name}-${Date.now()}.mp4`, clip.path, 'video/mp4');
                             driveLink = `\n\n[☁️ Salvo no Drive: ${uploadRes.webViewLink} ]`;
-                            driveLinks.push(uploadRes.webViewLink);
+                            driveLinks.push({ name: clip.name, url: uploadRes.webViewLink });
                             console.log(`[Video] ☁️ Upload Drive: ${clip.name}.mp4`);
                         } catch (err) {
                             uploadError = err instanceof Error ? err.message : String(err);
@@ -645,6 +662,33 @@ Inclua entre 1 e 5 cortes sugeridos.`,
             const s = Math.floor(total % 60);
             return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.00`;
         };
+        const splitIntoDisplayChunks = (text: string): string[] => {
+            const cleaned = sanitizeAssText(text);
+            if (!cleaned) return [];
+
+            const maxCharsPerLine = 24;
+            const maxLinesPerChunk = 2;
+            const words = cleaned.split(/\s+/).filter(Boolean);
+            const lines: string[] = [];
+            let currentLine = '';
+
+            for (const word of words) {
+                const candidate = currentLine ? `${currentLine} ${word}` : word;
+                if (candidate.length > maxCharsPerLine && currentLine) {
+                    lines.push(currentLine);
+                    currentLine = word;
+                } else {
+                    currentLine = candidate;
+                }
+            }
+            if (currentLine) lines.push(currentLine);
+
+            const chunks: string[] = [];
+            for (let i = 0; i < lines.length; i += maxLinesPerChunk) {
+                chunks.push(lines.slice(i, i + maxLinesPerChunk).join('\\N'));
+            }
+            return chunks.length > 0 ? chunks : [cleaned];
+        };
 
         const lines: string[] = [
             '[Script Info]',
@@ -656,8 +700,8 @@ Inclua entre 1 e 5 cortes sugeridos.`,
             '',
             '[V4+ Styles]',
             'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-            'Style: Header,DejaVu Sans,24,&H00FFFFFF,&H000000FF,&H66000000,&H66000000,-1,0,0,0,100,100,0,0,3,1,0,8,20,20,14,1',
-            'Style: Subtitle,DejaVu Sans,20,&H00FFFFFF,&H000000FF,&H64000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,2,28,28,26,1',
+            'Style: Header,DejaVu Sans,26,&H00FFFFFF,&H000000FF,&H66000000,&H66000000,-1,0,0,0,100,100,0,0,3,1,0,8,20,20,14,1',
+            'Style: Subtitle,DejaVu Sans,22,&H00FFFFFF,&H000000FF,&H64000000,&H64000000,0,0,0,0,100,100,0,0,1,2,0,2,28,28,26,1',
             '',
             '[Events]',
             'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
@@ -668,7 +712,21 @@ Inclua entre 1 e 5 cortes sugeridos.`,
         }
 
         for (const sub of subtitles) {
-            lines.push(`Dialogue: 0,${toAssTime(sub.start)},${toAssTime(sub.end)},Subtitle,,0,0,0,,${sanitizeAssText(sub.text)}`);
+            const startSec = this.parseTimeStr(sub.start);
+            const endSec = this.parseTimeStr(sub.end);
+            const displayChunks = splitIntoDisplayChunks(sub.text);
+            const span = Math.max(1, endSec - startSec);
+            const chunkDuration = span / displayChunks.length;
+
+            displayChunks.forEach((chunk, index) => {
+                const chunkStart = startSec + (chunkDuration * index);
+                const chunkEnd = index === displayChunks.length - 1
+                    ? endSec
+                    : startSec + (chunkDuration * (index + 1));
+                lines.push(
+                    `Dialogue: 0,${toAssTimeFromSeconds(chunkStart)},${toAssTimeFromSeconds(chunkEnd)},Subtitle,,0,0,0,,${chunk}`
+                );
+            });
         }
 
         writeFileSync(outputPath, lines.join('\n'), 'utf-8');
