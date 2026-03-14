@@ -6,7 +6,9 @@
  */
 
 import { google, type drive_v3 } from 'googleapis';
-import { readFileSync, createReadStream } from 'fs';
+import { readFileSync, createReadStream, existsSync } from 'fs';
+import { homedir } from 'os';
+import { execFileSync } from 'child_process';
 import { Readable } from 'stream';
 
 export interface DriveFolderMap {
@@ -29,39 +31,92 @@ export class DriveService {
     private rootFolderId: string;
 
     constructor(rootFolderId: string) {
-        // Usa caminhos absolutos base para os arquivos de OAuth gerados
         const basePath = process.cwd();
         const credPath = `${basePath}/data/google-oauth-credentials.json`;
         const tokenPath = `${basePath}/data/google-token.json`;
+        const gwsClientPath = `${homedir()}/.config/gws/client_secret.json`;
+        const canUseGwsFallback = process.env['NODE_ENV'] !== 'production' || process.env['DOUG_ENABLE_GWS_FALLBACK'] === '1';
 
-        let credentials;
-        try {
-            if (process.env['GOOGLE_OAUTH_CREDENTIALS']) {
-                credentials = JSON.parse(process.env['GOOGLE_OAUTH_CREDENTIALS']);
-            } else {
-                credentials = JSON.parse(readFileSync(credPath, 'utf-8'));
-            }
-        } catch (err: any) {
-            throw new Error(`[Drive] Erro ao carregar credenciais. Verifique a variável GOOGLE_OAUTH_CREDENTIALS ou o arquivo local.`);
-        }
+        const credentials = this.loadCredentials(credPath, gwsClientPath, canUseGwsFallback);
 
         const { client_secret, client_id, redirect_uris } = credentials.installed || credentials.web || credentials;
         const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris?.[0] || 'urn:ietf:wg:oauth:2.0:oob');
 
-        let token;
-        try {
-            if (process.env['GOOGLE_TOKEN']) {
-                token = JSON.parse(process.env['GOOGLE_TOKEN']);
-            } else {
-                token = JSON.parse(readFileSync(tokenPath, 'utf-8'));
-            }
-        } catch (err: any) {
-            throw new Error(`[Drive] Erro ao carregar token de acesso. Verifique a variável GOOGLE_TOKEN ou o arquivo local.`);
-        }
+        const token = this.loadToken(tokenPath, canUseGwsFallback);
 
         oAuth2Client.setCredentials(token);
         this.drive = google.drive({ version: 'v3', auth: oAuth2Client });
         this.rootFolderId = rootFolderId;
+    }
+
+    private loadCredentials(repoPath: string, gwsPath: string, canUseGwsFallback: boolean): any {
+        try {
+            if (process.env['GOOGLE_OAUTH_CREDENTIALS']) {
+                return JSON.parse(process.env['GOOGLE_OAUTH_CREDENTIALS']);
+            }
+
+            if (existsSync(repoPath)) {
+                return JSON.parse(readFileSync(repoPath, 'utf-8'));
+            }
+
+            if (canUseGwsFallback && existsSync(gwsPath)) {
+                console.log('[Drive] Usando client_secret.json do gws como fallback local.');
+                return JSON.parse(readFileSync(gwsPath, 'utf-8'));
+            }
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            throw new Error(`[Drive] Erro ao carregar credenciais: ${msg}`);
+        }
+
+        throw new Error('[Drive] Erro ao carregar credenciais. Verifique GOOGLE_OAUTH_CREDENTIALS, data/google-oauth-credentials.json ou ~/.config/gws/client_secret.json.');
+    }
+
+    private loadToken(repoPath: string, canUseGwsFallback: boolean): any {
+        try {
+            if (process.env['GOOGLE_TOKEN']) {
+                return JSON.parse(process.env['GOOGLE_TOKEN']);
+            }
+
+            if (existsSync(repoPath)) {
+                return JSON.parse(readFileSync(repoPath, 'utf-8'));
+            }
+
+            if (canUseGwsFallback) {
+                const exported = this.loadUnmaskedGwsCredentials();
+                if (exported) {
+                    console.log('[Drive] Usando credenciais OAuth do gws como fallback local.');
+                    return {
+                        refresh_token: exported.refresh_token,
+                        access_token: exported.access_token,
+                        scope: 'https://www.googleapis.com/auth/drive',
+                        token_type: 'Bearer',
+                    };
+                }
+            }
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            throw new Error(`[Drive] Erro ao carregar token de acesso: ${msg}`);
+        }
+
+        throw new Error('[Drive] Erro ao carregar token de acesso. Verifique GOOGLE_TOKEN, data/google-token.json ou o login local do gws.');
+    }
+
+    private loadUnmaskedGwsCredentials(): {
+        client_id?: string;
+        client_secret?: string;
+        refresh_token?: string;
+        access_token?: string;
+        type?: string;
+    } | null {
+        try {
+            const output = execFileSync('gws', ['auth', 'export', '--unmasked'], {
+                encoding: 'utf-8',
+                stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            return JSON.parse(output);
+        } catch {
+            return null;
+        }
     }
 
     /**
