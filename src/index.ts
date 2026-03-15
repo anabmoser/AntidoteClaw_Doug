@@ -186,24 +186,8 @@ async function bootstrap(): Promise<void> {
         }
     }
 
-    const gdriveToken = process.env.GOOGLE_DRIVE_MCP_AUTH_TOKEN;
-    if (gdriveToken) {
-        try {
-            await agent.getMcpManager().connectStdioServer({
-                name: 'google-drive',
-                command: 'npx',
-                args: ['-y', '@modelcontextprotocol/server-google-drive'],
-                env: {
-                    ...process.env,
-                    // Drive MCP expects credentials mechanism, usually configured via JSON path or tokens.
-                    // This is a placeholder standard environment variable, users must configure appropriately.
-                    GOOGLE_DRIVE_AUTH_TOKEN: gdriveToken
-                }
-            });
-            console.log(`[Main] ☁️ MCP Google Drive Server conectado com sucesso.`);
-        } catch (err) {
-            console.warn('[Main] Falha ao inicializar MCP Google Drive Server:', err);
-        }
+    if (process.env.GOOGLE_DRIVE_MCP_AUTH_TOKEN) {
+        console.warn('[Main] GOOGLE_DRIVE_MCP_AUTH_TOKEN configurado, mas o servidor MCP de Google Drive está desabilitado porque o pacote configurado não existe no npm. O Drive principal do Doug continua operando normalmente via DriveService.');
     }
 
     const postgresUrl = process.env.MCP_POSTGRES_URL;
