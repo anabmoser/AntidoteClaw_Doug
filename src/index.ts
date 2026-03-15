@@ -18,6 +18,7 @@ import { WebhookServer } from './automation/webhooks.js';
 import { weatherSkill } from './skills/builtin/weather.js';
 import { instagramInsightsSkill } from './skills/custom/instagram_insights.js';
 import { operationalMemorySkill } from './skills/custom/operational_memory.js';
+import { driveDiagSkill } from './skills/custom/drive_diag.js';
 import { writerSpecialist } from './specialists/writer.js';
 import { DesignerSpecialist } from './specialists/designer.js';
 import { ScoutSpecialist } from './specialists/scout.js';
@@ -76,6 +77,7 @@ async function bootstrap(): Promise<void> {
     agent.getSkills().register(weatherSkill);
     agent.getSkills().register(instagramInsightsSkill);
     agent.getSkills().register(operationalMemorySkill);
+    agent.getSkills().register(driveDiagSkill);
 
     // ─── Registra Specialists (Agentes Especializados) ─────────
 
