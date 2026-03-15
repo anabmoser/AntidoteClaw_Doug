@@ -290,6 +290,16 @@ export class DriveService {
         };
     }
 
+    async upsertText(
+        fileName: string,
+        text: string,
+        folderId: string
+    ): Promise<{ id: string; webViewLink: string }> {
+        const existing = await this.findFilesByName(fileName.replace(/\.(txt|md)$/, ''), folderId);
+        await Promise.all(existing.map(file => this.deleteFile(file.id)));
+        return this.saveText(fileName, text, folderId);
+    }
+
     async saveDesignerAsset(
         fileName: string,
         content: Buffer,
@@ -334,6 +344,25 @@ export class DriveService {
         }));
     }
 
+    async findFilesByName(
+        fileName: string,
+        folderId: string
+    ): Promise<{ id: string; name: string; mimeType: string }[]> {
+        const escapedName = fileName.replace(/'/g, "\\'");
+        const res = await this.drive.files.list({
+            q: `name='${escapedName}' and '${folderId}' in parents and trashed=false`,
+            fields: 'files(id,name,mimeType)',
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
+        });
+
+        return (res.data.files ?? []).map(f => ({
+            id: f.id!,
+            name: f.name!,
+            mimeType: f.mimeType!,
+        }));
+    }
+
     /**
      * Baixa um arquivo do Drive como Buffer.
      */
@@ -343,6 +372,13 @@ export class DriveService {
             { responseType: 'arraybuffer' }
         );
         return Buffer.from(res.data as ArrayBuffer);
+    }
+
+    async deleteFile(fileId: string): Promise<void> {
+        await this.drive.files.delete({
+            fileId,
+            supportsAllDrives: true,
+        });
     }
 
     private requireFolders(): DriveFolderMap {

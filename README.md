@@ -33,6 +33,25 @@ npm start
 - Para upload binário no Railway, configure `GOOGLE_DRIVE_ROOT_FOLDER_ID`, `GOOGLE_OAUTH_CREDENTIALS` e `GOOGLE_TOKEN`.
 - `GOOGLE_OAUTH_CREDENTIALS` deve ser o JSON serializado do cliente OAuth.
 - `GOOGLE_TOKEN` deve ser o JSON serializado com `refresh_token` válido para Drive.
+- Em ambiente local, o `DriveService` também pode usar o login já autenticado do `gws` como fallback, sem afetar a produção.
+
+## Memória Operacional
+
+- O Doug pode atualizar a memória operacional quando você pedir explicitamente.
+- Comandos/frases suportados:
+  - `/memoria`
+  - `Doug, atualize a memória do Doug: ...`
+  - `Doug, registre na memória do Doug: ...`
+  - `Doug, registre no GitHub: ...`
+- O fluxo tenta sincronizar:
+  - Google Drive: documento `MEMORIA-OPERACIONAL-DOUG-ATUAL`
+  - GitHub: arquivo `docs/MEMORIA-OPERACIONAL-DOUG-ATUAL.md`
+- Para sincronizar no GitHub via API, configure `GITHUB_PERSONAL_ACCESS_TOKEN`.
+- Variáveis opcionais para customizar o destino:
+  - `GITHUB_REPO_OWNER`
+  - `GITHUB_REPO_NAME`
+  - `GITHUB_REPO_BRANCH`
+  - `GITHUB_MEMORY_FILE_PATH`
 
 ## Railway
 
@@ -47,6 +66,7 @@ npm start
   - `GOOGLE_DRIVE_ROOT_FOLDER_ID`
   - `GOOGLE_OAUTH_CREDENTIALS`
   - `GOOGLE_TOKEN`
+  - `GITHUB_PERSONAL_ACCESS_TOKEN` se quiser memória sincronizada no GitHub pelo Doug
 - Rotas úteis após subir:
   - `/`
   - `/health`

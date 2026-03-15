@@ -134,6 +134,7 @@ export interface SkillInput {
     channel: ChannelType;
     mcpManager?: import('./mcp.js').McpManager;
     llmRouter?: import('./llm/router.js').LLMRouter;
+    driveService?: import('../services/drive.js').DriveService;
   };
 }
 

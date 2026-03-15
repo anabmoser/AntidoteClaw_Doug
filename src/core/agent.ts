@@ -232,6 +232,7 @@ export class Agent {
                         channel: incoming.channel,
                         mcpManager: this.getMcpManager(),
                         llmRouter: this.llmRouter,
+                        driveService: this.driveService,
                     },
                 });
 
